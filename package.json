@@ -1,7 +1,7 @@
-here{
+{
   "name": "reminder-bot",
   "version": "1.0.0",
-  "description": "Lampoon Reminder Bot for Honor of Kings showcase channels",
+  "description": "Lampoon Reminder Bot for Honor of Kings",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
