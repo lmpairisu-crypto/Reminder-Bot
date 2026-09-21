@@ -1,25 +1,24 @@
+
 // ==========================================
 // LAMPOON REMINDER BOT
-// Discord.js v14
-// Render + OpenAI Vision
+// Clean Moderation + Sticky System
 // ==========================================
 
 require("dotenv").config();
 
 const http = require("http");
+const OpenAI = require("openai");
 
 const {
   Client,
   GatewayIntentBits,
   Partials,
   EmbedBuilder,
-  PermissionsBitField,
   SlashCommandBuilder,
   REST,
   Routes,
+  PermissionFlagsBits,
 } = require("discord.js");
-
-const OpenAI = require("openai");
 
 // ==========================================
 // ENVIRONMENT
@@ -29,10 +28,15 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
-const LAMPOON_ICON_URL = process.env.LAMPOON_ICON_URL || null;
-const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || null;
+const LAMPOON_ICON_URL =
+  process.env.LAMPOON_ICON_URL || null;
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || null;
+const MOD_LOG_CHANNEL_ID =
+  process.env.MOD_LOG_CHANNEL_ID || null;
+
+const OPENAI_API_KEY =
+  process.env.OPENAI_API_KEY || null;
+
 const OPENAI_VISION_MODEL =
   process.env.OPENAI_VISION_MODEL || "gpt-5.6-luna";
 
@@ -45,26 +49,21 @@ const REPEATED_VIOLATION_TIMEOUT_MINUTES =
 const SERIOUS_VIOLATION_TIMEOUT_MINUTES =
   Number(process.env.SERIOUS_VIOLATION_TIMEOUT_MINUTES) || 60;
 
-
 // ==========================================
-// VALIDATE ENVIRONMENT
+// VALIDATION
 // ==========================================
 
 if (!TOKEN) {
-  console.error("❌ DISCORD_TOKEN is missing.");
-  process.exit(1);
+  throw new Error("Missing DISCORD_TOKEN environment variable.");
 }
 
 if (!CLIENT_ID) {
-  console.error("❌ CLIENT_ID is missing.");
-  process.exit(1);
+  throw new Error("Missing CLIENT_ID environment variable.");
 }
 
 if (!GUILD_ID) {
-  console.error("❌ GUILD_ID is missing.");
-  process.exit(1);
+  throw new Error("Missing GUILD_ID environment variable.");
 }
-
 
 // ==========================================
 // RENDER HEALTH CHECK
@@ -73,31 +72,26 @@ if (!GUILD_ID) {
 const PORT = Number(process.env.PORT) || 10000;
 
 const server = http.createServer((req, res) => {
-
   if (req.url === "/health") {
-
     res.writeHead(200, {
-      "Content-Type": "text/plain",
+      "Content-Type": "text/plain; charset=utf-8",
     });
 
     return res.end("OK");
   }
 
   res.writeHead(200, {
-    "Content-Type": "text/plain",
+    "Content-Type": "text/plain; charset=utf-8",
   });
 
   res.end("Reminder Bot is online.");
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-
   console.log(
     `🌐 Reminder Bot health server running on port ${PORT}`
   );
-
 });
-
 
 // ==========================================
 // OPENAI
@@ -109,41 +103,26 @@ const openai = OPENAI_API_KEY
     })
   : null;
 
-
 // ==========================================
 // DISCORD CLIENT
 // ==========================================
 
 const client = new Client({
-
   intents: [
-
     GatewayIntentBits.Guilds,
-
     GatewayIntentBits.GuildMembers,
-
     GatewayIntentBits.GuildMessages,
-
     GatewayIntentBits.MessageContent,
-
     GatewayIntentBits.GuildMessageReactions,
-
   ],
 
   partials: [
-
     Partials.Channel,
-
     Partials.Message,
-
     Partials.Reaction,
-
     Partials.User,
-
   ],
-
 });
-
 
 // ==========================================
 // CONSTANTS
@@ -151,263 +130,158 @@ const client = new Client({
 
 const GOLD = "#D4AF37";
 
-const STICKY_MARKER = "READ CHANNEL'S TOPIC !";
-
 const AVISALA =
   "<a:Avisala:1542448826265243660>";
 
-
-// ==========================================
-// STICKY DISPLAY NAMES
-// ==========================================
-
-const STICKY_NAMES = {
-
-  profile:
-    `${AVISALA} PROFILE SHOWCASE`,
-
-  skin:
-    `${AVISALA} SKIN SHOWCASE`,
-
-  hero:
-    `${AVISALA} HERO HIGHLIGHT`,
-
-  meme:
-    `${AVISALA} MEME`,
-
-  code:
-    `${AVISALA} EVENT CODE SHARE`,
-
-  fanart:
-    `${AVISALA} FAN ART`,
-
-  build:
-    `${AVISALA} BUILD TIPS GUIDE`,
-
-};
-
+const STICKY_MARKER =
+  "READ CHANNEL'S TOPIC !";
 
 // ==========================================
 // CHANNEL RULES
-// ==========================================
-// REPLACE THESE PLACEHOLDERS WITH REAL IDs
 // ==========================================
 
 const CHANNEL_RULES = {
 
   // ----------------------------------------
-  // COMMUNITY PROFILE
+  // PROFILE
   // ----------------------------------------
 
   "1544771901308796929": {
-
     type: "profile",
-
-    name: "PROFILE SHOWCASE",
-
+    name: "Community Profile Showcase",
     description:
-      "Honor of Kings profile screenshots and videos only. Skin screenshots, gameplay screenshots, random photos and unrelated content are not allowed.",
-
+      "Share your Honor of Kings profile screen or profile showcase.",
   },
-
-
-  // ----------------------------------------
-  // LAMPOON PROFILE
-  // ----------------------------------------
 
   "1544183278779764742": {
-
     type: "profile",
-
-    name: "PROFILE SHOWCASE",
-
+    name: "Lampoon Profile Showcase",
     description:
-      "Honor of Kings profile screenshots and videos only. Skin screenshots, gameplay screenshots, random photos and unrelated content are not allowed.",
-
+      "Share your Honor of Kings profile screen or profile showcase.",
   },
 
-
   // ----------------------------------------
-  // COMMUNITY SKIN
+  // SKIN
   // ----------------------------------------
 
   "1544771836175196204": {
-
     type: "skin",
-
-    name: "SKIN SHOWCASE",
-
+    name: "Community Skin Showcase",
     description:
-      "Honor of Kings skin showcases, previews, reveals, collections, animations, openings and skin-related media only. Profile screenshots, gameplay and unrelated content are not allowed.",
-
+      "Share Honor of Kings skins, skin previews, collections, reveals, or skin-related screenshots.",
   },
-
-
-  // ----------------------------------------
-  // LAMPOON SKIN
-  // ----------------------------------------
 
   "1544183056867393599": {
-
     type: "skin",
-
-    name: "SKIN SHOWCASE",
-
+    name: "Lampoon Skin Showcase",
     description:
-      "Honor of Kings skin showcases, previews, reveals, collections, animations, openings and skin-related media only. Profile screenshots, gameplay and unrelated content are not allowed.",
-
+      "Share Honor of Kings skins, skin previews, collections, reveals, or skin-related screenshots.",
   },
 
-
   // ----------------------------------------
-  // COMMUNITY HERO
+  // HERO
   // ----------------------------------------
 
   "1544771692025483315": {
-
     type: "hero",
-
-    name: "HERO HIGHLIGHT",
-
+    name: "Community Hero Highlight",
     description:
-      "Honor of Kings gameplay and hero highlight videos only, including combat, skills, combos, kills, outplays, escapes, team fights, map plays and other gameplay highlights.",
-
+      "Share Honor of Kings Hero Highlight videos.",
   },
-
-
-  // ----------------------------------------
-  // LAMPOON HERO
-  // ----------------------------------------
 
   "1544181729097687120": {
-
     type: "hero",
-
-    name: "HERO HIGHLIGHT",
-
+    name: "Lampoon Hero Highlight",
     description:
-      "Honor of Kings gameplay and hero highlight videos only, including combat, skills, combos, kills, outplays, escapes, team fights, map plays and other gameplay highlights.",
-
+      "Share Honor of Kings Hero Highlight videos.",
   },
 
-
   // ----------------------------------------
-  // COMMUNITY MEME
+  // MEME
   // ----------------------------------------
 
   "1541020560929198090": {
-
     type: "meme",
-
-    name: "MEME",
-
+    name: "Community HOK Meme Share",
     description:
-      "Funny Honor of Kings or community-related memes only. Harassment, hateful content, sexual/explicit content, threats, doxxing and other prohibited content are not allowed.",
-
+      "Share Honor of Kings memes, funny screenshots, edits, reactions, and parody content.",
   },
-
-
-  // ----------------------------------------
-  // LAMPOON MEME
-  // ----------------------------------------
 
   "1543552879942434837": {
-
     type: "meme",
-
-    name: "MEME",
-
+    name: "Lampoon Standpost Meme",
     description:
-      "Funny Honor of Kings or community-related memes only. Harassment, hateful content, sexual/explicit content, threats, doxxing and other prohibited content are not allowed.",
-
+      "Share Honor of Kings memes, funny screenshots, edits, reactions, and parody content.",
   },
 
-
   // ----------------------------------------
-  // COMMUNITY EVENT CODE
+  // EVENT CODE
   // ----------------------------------------
 
   "1541019893552644187": {
-
     type: "code",
-
-    name: "EVENT CODE SHARE",
-
+    name: "Community Event Code Share",
     description:
-      "Honor of Kings event codes and screenshots containing event codes only. Captions and descriptions are allowed when related to the code.",
-
+      "Share valid Honor of Kings event codes and code screenshots.",
   },
-
-
-  // ----------------------------------------
-  // LAMPOON EVENT CODE
-  // ----------------------------------------
 
   "1544182436353810432": {
-
     type: "code",
-
-    name: "EVENT CODE SHARE",
-
+    name: "Lampoon Event Share Code",
     description:
-      "Honor of Kings event codes and screenshots containing event codes only. Captions and descriptions are allowed when related to the code.",
-
+      "Share valid Honor of Kings event codes and code screenshots.",
   },
-
 
   // ----------------------------------------
   // FAN ART
   // ----------------------------------------
 
   "1541020395426283521": {
-
     type: "fanart",
-
-    name: "FAN ART",
-
+    name: "Community HOK Fan Art Share",
     description:
-      "Honor of Kings fan-created artwork only. Pencil, line art, digital art and traditional art are allowed. AI-generated art, ordinary screenshots, official promotional art, memes and unrelated images are not allowed.",
-
+      "Share original human-created Honor of Kings fan art.",
   },
-
 
   // ----------------------------------------
   // BUILD TIPS
   // ----------------------------------------
 
   "1541019792394158080": {
-
     type: "build",
-
-    name: "BUILD TIPS GUIDE",
-
+    name: "Community Build Tips Guide",
     description:
-      "Honor of Kings build tips, item recommendations, Arcana, hero builds, match analysis and educational gameplay guides only. Casual chatting and unrelated content are not allowed.",
-
+      "Share useful Honor of Kings builds, guides, tips, strategies, and educational content.",
   },
-
 };
 
+// ==========================================
+// STICKY DISPLAY NAMES
+// ==========================================
+
+const STICKY_NAMES = {
+  profile: `${AVISALA} PROFILE SHOWCASE`,
+  skin: `${AVISALA} SKIN SHOWCASE`,
+  hero: `${AVISALA} HERO HIGHLIGHT`,
+  meme: `${AVISALA} MEME`,
+  code: `${AVISALA} EVENT CODE SHARE`,
+  fanart: `${AVISALA} FAN ART`,
+  build: `${AVISALA} BUILD TIPS GUIDE`,
+};
 
 // ==========================================
-// STICKY MESSAGE CACHE
+// MEMORY
 // ==========================================
 
 const stickyMessages = new Map();
-
-
-// ==========================================
-// VIOLATION TRACKER
-// ==========================================
-
 const violationCounts = new Map();
 
-
 // ==========================================
-// BASIC MEDIA HELPERS
+// MEDIA HELPERS
 // ==========================================
 
 function isImage(attachment) {
+  if (!attachment) return false;
 
   const contentType =
     attachment.contentType || "";
@@ -421,8 +295,8 @@ function isImage(attachment) {
   );
 }
 
-
 function isVideo(attachment) {
+  if (!attachment) return false;
 
   const contentType =
     attachment.contentType || "";
@@ -436,120 +310,266 @@ function isVideo(attachment) {
   );
 }
 
-
 function getImages(message) {
-
   return [...message.attachments.values()]
     .filter(isImage);
 }
 
-
 function getVideos(message) {
-
   return [...message.attachments.values()]
     .filter(isVideo);
 }
 
-
 // ==========================================
-// POSSIBLE EVENT CODE
+// EVENT CODE DETECTION
 // ==========================================
 
 function containsPossibleCode(text) {
-
   if (!text) return false;
 
-  const clean =
-    text.trim();
+  const value = text.trim();
 
-  if (!clean) return false;
+  if (!value) return false;
 
-  // Common code formats
-  const patterns = [
+  // Long alphanumeric codes
+  if (
+    /\b[A-Z0-9]{4,32}\b/i.test(value)
+  ) {
+    return true;
+  }
 
-    /^[A-Z0-9]{4,32}$/i,
+  // Codes containing hyphens or underscores
+  if (
+    /\b[A-Z0-9]{2,16}[-_][A-Z0-9]{2,16}\b/i.test(
+      value
+    )
+  ) {
+    return true;
+  }
 
-    /^[A-Z0-9]{3,12}[-_][A-Z0-9]{2,12}$/i,
+  // Numeric event codes
+  if (
+    /\b\d{4,32}\b/.test(value)
+  ) {
+    return true;
+  }
 
-    /^[A-Z0-9]{2,12}[-_][A-Z0-9]{2,12}[-_][A-Z0-9]{2,12}$/i,
-
-    /^\d{4,32}$/,
-
-  ];
-
-  return patterns.some(
-    pattern => pattern.test(clean)
-  );
+  return false;
 }
-
 
 // ==========================================
 // CASUAL CHAT DETECTION
 // ==========================================
 
 function isCasualChat(text) {
-
   if (!text) return false;
 
-  const normalized =
-    text
-      .trim()
-      .toLowerCase()
-      .replace(/[!?.,]+$/g, "");
+  const value = text
+    .trim()
+    .toLowerCase()
+    .replace(/[!?.,]+$/g, "");
 
-  const casual = [
-
+  const casual = new Set([
     "hi",
     "hello",
     "hey",
     "helo",
     "hii",
     "hiii",
-
     "good morning",
     "good afternoon",
     "good evening",
-
     "anyone online",
     "anyone here",
     "who's online",
     "whos online",
-
     "nice",
     "lol",
     "lmao",
     "haha",
     "hahaha",
-
     "thanks",
     "thank you",
     "ty",
-
     "good",
     "cool",
     "wow",
+  ]);
 
-  ];
-
-  return casual.includes(normalized);
+  return casual.has(value);
 }
 
+// ==========================================
+// STICKY EMBED
+// ==========================================
+
+function createStickyEmbed(rule) {
+  const displayName =
+    STICKY_NAMES[rule.type] ||
+    `${AVISALA} ${rule.name}`;
+
+  return new EmbedBuilder()
+    .setColor(GOLD)
+    .setTitle(STICKY_MARKER)
+    .setThumbnail(
+      LAMPOON_ICON_URL ||
+        client.user.displayAvatarURL()
+    )
+    .setDescription(
+      `**${displayName}**\n\n` +
+        `${rule.description}\n\n` +
+        `💬 **Captions, descriptions, titles and quotes are allowed.**\n\n` +
+        `🚫 **Do not reply to another member's post.**\n\n` +
+        `🚫 **Unrelated content will be removed.**`
+    );
+}
 
 // ==========================================
-// OPENAI IMAGE CLASSIFIER
+// FIND EXISTING STICKY
 // ==========================================
 
-async function classifyImage(imageUrl, channelType) {
+async function findExistingSticky(channel) {
+  try {
+    const messages = await channel.messages.fetch({
+      limit: 100,
+    });
 
+    const stickies = messages.filter(
+      (message) =>
+        message.author.id === client.user.id &&
+        message.embeds.some(
+          (embed) =>
+            embed.title === STICKY_MARKER
+        )
+    );
+
+    if (!stickies.size) {
+      return null;
+    }
+
+    const sorted = [...stickies.values()].sort(
+      (a, b) => a.createdTimestamp - b.createdTimestamp
+    );
+
+    const keeper = sorted[0];
+
+    // Remove duplicates.
+    for (const duplicate of sorted.slice(1)) {
+      await duplicate.delete().catch(() => {});
+    }
+
+    return keeper;
+  } catch (error) {
+    console.error(
+      `❌ Sticky search failed in #${channel.name}:`,
+      error.message
+    );
+
+    return null;
+  }
+}
+
+// ==========================================
+// ENSURE ONE STICKY
+// ==========================================
+
+async function ensureSticky(channel, rule) {
+  try {
+    let sticky =
+      stickyMessages.get(channel.id) || null;
+
+    if (sticky) {
+      try {
+        sticky = await channel.messages.fetch(
+          sticky.id
+        );
+      } catch {
+        sticky = null;
+        stickyMessages.delete(channel.id);
+      }
+    }
+
+    if (!sticky) {
+      sticky = await findExistingSticky(channel);
+    }
+
+    const embed = createStickyEmbed(rule);
+
+    if (sticky) {
+      await sticky.edit({
+        embeds: [embed],
+      });
+
+      stickyMessages.set(
+        channel.id,
+        sticky
+      );
+
+      return sticky;
+    }
+
+    const created = await channel.send({
+      embeds: [embed],
+    });
+
+    stickyMessages.set(
+      channel.id,
+      created
+    );
+
+    console.log(
+      `📌 Sticky created in #${channel.name}`
+    );
+
+    return created;
+  } catch (error) {
+    console.error(
+      `❌ Failed to ensure sticky in #${channel.name}:`,
+      error.message
+    );
+
+    return null;
+  }
+}
+
+// ==========================================
+// REFRESH STICKY
+// ==========================================
+
+async function refreshSticky(channel, rule) {
+  return ensureSticky(channel, rule);
+}
+
+// ==========================================
+// STAFF CHECK
+// ==========================================
+
+function isStaff(member) {
+  if (!member) return false;
+
+  return member.permissions.has(
+    PermissionFlagsBits.ManageMessages
+  );
+}
+
+// ==========================================
+// OPENAI IMAGE CLASSIFICATION
+// ==========================================
+
+async function classifyImage(
+  imageUrl,
+  channelType
+) {
   if (!openai) {
-
     console.warn(
-      "⚠️ OPENAI_API_KEY not configured. Image AI classification unavailable."
+      "⚠️ OPENAI_API_KEY is missing. Image classification unavailable."
     );
 
     return {
       allowed: false,
-      reason: "AI classification unavailable.",
+      serious: false,
+      reason:
+        "AI image classification is unavailable.",
     };
   }
 
@@ -560,166 +580,161 @@ async function classifyImage(imageUrl, channelType) {
   // ----------------------------------------
 
   if (channelType === "profile") {
-
     instruction = `
-Determine whether this image is specifically an Honor of Kings PROFILE SCREEN.
+Classify this image for an Honor of Kings PROFILE SHOWCASE channel.
 
 ALLOW only if the image clearly shows an Honor of Kings player profile,
-profile page, player information/profile interface, profile statistics,
-profile card or similar profile screen.
+profile screen, profile page, profile showcase, player statistics,
+or another clearly recognizable in-game profile interface.
 
 REJECT:
-- Honor of Kings skin showcase
-- skin artwork
+- skins
 - gameplay
-- battle screenshot
-- hero screen
-- shop screen
-- random photo
-- unrelated image
-- meme
+- random screenshots
 - fan art
-- ambiguous image
+- memes
+- unrelated content
+- ambiguous images
 
 Return JSON only:
-{"allowed":true/false,"reason":"short reason"}
+{
+  "allowed": true or false,
+  "serious": false,
+  "reason": "short reason"
+}
 `;
-
   }
-
 
   // ----------------------------------------
   // SKIN
   // ----------------------------------------
 
   else if (channelType === "skin") {
-
     instruction = `
-Determine whether this image is an Honor of Kings SKIN SHOWCASE.
+Classify this image for an Honor of Kings SKIN SHOWCASE channel.
 
-ALLOW:
-- Honor of Kings skin showcase
+ALLOW if it clearly shows an Honor of Kings:
+- skin
 - skin preview
 - skin collection
 - skin card
-- skin artwork when clearly presented as an in-game skin
 - skin reveal
-- skin animation preview
-- obtaining/unlocking a skin
-- skin display
+- skin animation
+- skin obtaining screen
+- official in-game skin presentation
 
 REJECT:
 - player profile
-- gameplay
-- match screenshot
-- random photo
-- unrelated image
-- fan art unrelated to an in-game skin
+- ordinary gameplay
+- unrelated images
+- random screenshots
+- fan art
+- ambiguous images
 
 Return JSON only:
-{"allowed":true/false,"reason":"short reason"}
+{
+  "allowed": true or false,
+  "serious": false,
+  "reason": "short reason"
+}
 `;
-
   }
-
 
   // ----------------------------------------
   // MEME
   // ----------------------------------------
 
   else if (channelType === "meme") {
-
     instruction = `
-Determine whether this image is a funny Honor of Kings or community-related MEME.
+Classify this image for an Honor of Kings MEME channel.
 
 ALLOW:
-- HOK meme
-- gaming meme
-- HOK reaction meme
-- funny screenshot
-- parody/edit
-- funny HOK GIF/image
-- community-related humor
+- Honor of Kings memes
+- funny HOK screenshots
+- HOK reaction images
+- HOK parody
+- HOK edits
+- humorous HOK images
+- HOK GIF-style imagery
 
 REJECT:
-- unrelated random photo
-- serious unrelated content
+- unrelated content
 - explicit sexual content
 - severe harassment
-- hateful content targeting protected classes
+- hateful targeting of protected classes
 - threats
-- doxxing/private information
+- doxxing
+- private information
 - self-harm encouragement
-- malicious spam/advertising
+- malicious spam or advertisements
 
-Protected-class words alone are NOT enough to reject an image.
-Context and targeting matter.
+A protected-class word by itself is NOT enough to reject an image.
 
 Return JSON only:
-{"allowed":true/false,"reason":"short reason"}
+{
+  "allowed": true or false,
+  "serious": true or false,
+  "reason": "short reason"
+}
 `;
-
   }
-
 
   // ----------------------------------------
   // FAN ART
   // ----------------------------------------
 
   else if (channelType === "fanart") {
-
     instruction = `
-Determine whether this image is HUMAN-CREATED FAN ART related to Honor of Kings.
+Classify this image for an Honor of Kings FAN ART channel.
 
 ALLOW:
-- HOK fan-created artwork
-- hero fan art
-- skin fan art
-- character drawings
-- pencil drawings
+- human-created Honor of Kings fan art
+- hand-drawn HOK art
+- pencil art
 - line art
-- digital artwork
-- traditional artwork
+- digital art
+- traditional art
+- drawings of HOK heroes or skins
 
 REJECT:
 - AI-generated artwork
-- ordinary in-game screenshot
-- official promotional art
-- official game artwork
-- meme
-- random photo
-- unrelated art
-- unrelated image
+- ordinary in-game screenshots
+- official promotional images
+- gameplay screenshots
+- memes
+- unrelated artwork
+- ambiguous images
 
-If it appears AI-generated or you cannot reasonably determine that it is
-human-created fan art, reject it.
+If you cannot confidently determine that it is human-created HOK fan art,
+reject it.
 
 Return JSON only:
-{"allowed":true/false,"reason":"short reason"}
+{
+  "allowed": true or false,
+  "serious": false,
+  "reason": "short reason"
+}
 `;
-
   }
 
-
-  // ========================================
-  // CALL OPENAI
-  // ========================================
+  else {
+    return {
+      allowed: true,
+      serious: false,
+      reason: "No image classifier required.",
+    };
+  }
 
   try {
-
     const response =
       await openai.responses.create({
-
         model: OPENAI_VISION_MODEL,
 
         input: [
-
           {
-
             role: "user",
 
             content: [
-
               {
                 type: "input_text",
                 text: instruction,
@@ -729,123 +744,49 @@ Return JSON only:
                 type: "input_image",
                 image_url: imageUrl,
               },
-
             ],
-
           },
-
         ],
-
       });
-
 
     const output =
       response.output_text || "";
 
-
-    // Extract JSON
     const match =
       output.match(/\{[\s\S]*\}/);
 
     if (!match) {
-
       return {
         allowed: false,
-        reason: "AI returned an invalid classification.",
+        serious: false,
+        reason:
+          "AI returned an invalid classification.",
       };
-
     }
-
 
     const result =
       JSON.parse(match[0]);
 
-
     return {
-
-      allowed:
-        result.allowed === true,
-
+      allowed: Boolean(result.allowed),
+      serious: Boolean(result.serious),
       reason:
-        result.reason ||
-        "No reason provided.",
-
+        String(result.reason || "No reason provided."),
     };
-
   } catch (error) {
-
     console.error(
-      "❌ OpenAI image classification error:",
+      "❌ OpenAI image classification failed:",
       error.message
     );
 
     return {
-
       allowed: false,
-
+      serious: false,
       reason:
         "Image classification failed.",
-
     };
-
   }
-
 }
-
-
-// ==========================================
-// CLASSIFY ALL IMAGES
-// ==========================================
-
-async function classifyMessageImages(
-  message,
-  channelType
-) {
-
-  const images =
-    getImages(message);
-
-  if (images.length === 0) {
-
-    return {
-
-      allowed: false,
-
-      reason: "No image found.",
-
-    };
-
-  }
-
-
-  for (const image of images) {
-
-    const result =
-      await classifyImage(
-        image.url,
-        channelType
-      );
-
-    if (result.allowed) {
-
-      return result;
-
-    }
-
-  }
-
-
-  return {
-
-    allowed: false,
-
-    reason:
-      "The image does not match this channel's content rules.",
-
-  };
-
-}
-
 
 // ==========================================
 // MESSAGE VALIDATION
@@ -855,601 +796,359 @@ async function validateMessage(
   message,
   rule
 ) {
-
-  // ========================================
-  // REPLIES ARE NEVER ALLOWED
-  // ========================================
+  // ----------------------------------------
+  // REPLIES
+  // ----------------------------------------
 
   if (message.reference) {
-
     return {
-
       allowed: false,
-
+      serious: false,
       reason:
         "Replies to another member's post are not allowed in this channel.",
-
-      serious: false,
-
     };
-
   }
 
+  const images = getImages(message);
+  const videos = getVideos(message);
 
-  // ========================================
+  // ----------------------------------------
   // PROFILE
-  // ========================================
+  // ----------------------------------------
 
   if (rule.type === "profile") {
-
-    const images =
-      getImages(message);
-
-    const videos =
-      getVideos(message);
-
-    if (
-      images.length === 0 &&
-      videos.length === 0
-    ) {
-
+    if (!images.length && !videos.length) {
       return {
-
         allowed: false,
-
-        reason:
-          "Profile Showcase requires an Honor of Kings profile image or video.",
-
         serious: false,
-
-      };
-
-    }
-
-
-    // Image AI check
-    if (images.length > 0) {
-
-      const result =
-        await classifyMessageImages(
-          message,
-          "profile"
-        );
-
-      if (!result.allowed) {
-
-        return {
-
-          allowed: false,
-
-          reason: result.reason,
-
-          serious: false,
-
-        };
-
-      }
-
-    }
-
-
-    // Videos are structurally accepted.
-    // Semantic video checking requires frame extraction.
-
-    return {
-      allowed: true,
-    };
-
-  }
-
-
-  // ========================================
-  // SKIN
-  // ========================================
-
-  if (rule.type === "skin") {
-
-    const images =
-      getImages(message);
-
-    const videos =
-      getVideos(message);
-
-    if (
-      images.length === 0 &&
-      videos.length === 0
-    ) {
-
-      return {
-
-        allowed: false,
-
         reason:
-          "Skin Showcase requires Honor of Kings skin media.",
-
-        serious: false,
-
+          "A profile image or video is required.",
       };
-
     }
 
-
-    if (images.length > 0) {
-
-      const result =
-        await classifyMessageImages(
-          message,
-          "skin"
-        );
-
-      if (!result.allowed) {
-
-        return {
-
-          allowed: false,
-
-          reason: result.reason,
-
-          serious: false,
-
-        };
-
-      }
-
-    }
-
-
-    return {
-      allowed: true,
-    };
-
-  }
-
-
-  // ========================================
-  // HERO HIGHLIGHT
-  // ========================================
-
-  if (rule.type === "hero") {
-
-    const videos =
-      getVideos(message);
-
-    if (videos.length === 0) {
-
-      return {
-
-        allowed: false,
-
-        reason:
-          "Hero Highlight requires an Honor of Kings gameplay/highlight video.",
-
-        serious: false,
-
-      };
-
-    }
-
-    return {
-      allowed: true,
-    };
-
-  }
-
-
-  // ========================================
-  // MEME
-  // ========================================
-
-  if (rule.type === "meme") {
-
-    const images =
-      getImages(message);
-
-    const videos =
-      getVideos(message);
-
-    if (
-      images.length === 0 &&
-      videos.length === 0
-    ) {
-
-      return {
-
-        allowed: false,
-
-        reason:
-          "Meme channel requires a meme image or video.",
-
-        serious: false,
-
-      };
-
-    }
-
-
-    if (images.length > 0) {
-
-      const result =
-        await classifyMessageImages(
-          message,
-          "meme"
-        );
-
-      if (!result.allowed) {
-
-        return {
-
-          allowed: false,
-
-          reason: result.reason,
-
-          serious: false,
-
-        };
-
-      }
-
-    }
-
-
-    return {
-      allowed: true,
-    };
-
-  }
-
-
-  // ========================================
-  // EVENT CODE
-  // ========================================
-
-  if (rule.type === "code") {
-
-    const text =
-      message.content.trim();
-
-    const images =
-      getImages(message);
-
-    const videos =
-      getVideos(message);
-
-
-    // Text code
-    if (containsPossibleCode(text)) {
-
-      return {
-        allowed: true,
-      };
-
-    }
-
-
-    // Code screenshot
-    if (images.length > 0) {
-
-      return {
-        allowed: true,
-      };
-
-    }
-
-
-    // Video is not accepted
-    if (videos.length > 0) {
-
-      return {
-
-        allowed: false,
-
-        reason:
-          "Event Code Share does not allow unrelated videos.",
-
-        serious: false,
-
-      };
-
-    }
-
-
-    return {
-
-      allowed: false,
-
-      reason:
-        "Only event codes or screenshots containing event codes are allowed.",
-
-      serious: false,
-
-    };
-
-  }
-
-
-  // ========================================
-  // FAN ART
-  // ========================================
-
-  if (rule.type === "fanart") {
-
-    const images =
-      getImages(message);
-
-    if (images.length === 0) {
-
-      return {
-
-        allowed: false,
-
-        reason:
-          "Fan Art requires a human-created Honor of Kings artwork image.",
-
-        serious: false,
-
-      };
-
-    }
-
-
-    const result =
-      await classifyMessageImages(
-        message,
-        "fanart"
+    if (images.length) {
+      const result = await classifyImage(
+        images[0].url,
+        "profile"
       );
 
-
-    if (!result.allowed) {
-
-      return {
-
-        allowed: false,
-
-        reason: result.reason,
-
-        serious: false,
-
-      };
-
+      return result;
     }
 
+    // Videos are structurally accepted.
+    return {
+      allowed: true,
+      serious: false,
+      reason: "Profile video accepted.",
+    };
+  }
+
+  // ----------------------------------------
+  // SKIN
+  // ----------------------------------------
+
+  if (rule.type === "skin") {
+    if (!images.length && !videos.length) {
+      return {
+        allowed: false,
+        serious: false,
+        reason:
+          "A skin image or video is required.",
+      };
+    }
+
+    if (images.length) {
+      return classifyImage(
+        images[0].url,
+        "skin"
+      );
+    }
 
     return {
       allowed: true,
+      serious: false,
+      reason: "Skin video accepted.",
     };
-
   }
 
+  // ----------------------------------------
+  // HERO
+  // ----------------------------------------
 
-  // ========================================
+  if (rule.type === "hero") {
+    if (!videos.length) {
+      return {
+        allowed: false,
+        serious: false,
+        reason:
+          "A Hero Highlight video is required.",
+      };
+    }
+
+    return {
+      allowed: true,
+      serious: false,
+      reason: "Hero Highlight video accepted.",
+    };
+  }
+
+  // ----------------------------------------
+  // MEME
+  // ----------------------------------------
+
+  if (rule.type === "meme") {
+    if (!images.length && !videos.length) {
+      return {
+        allowed: false,
+        serious: false,
+        reason:
+          "A meme image or video is required.",
+      };
+    }
+
+    if (images.length) {
+      return classifyImage(
+        images[0].url,
+        "meme"
+      );
+    }
+
+    return {
+      allowed: true,
+      serious: false,
+      reason: "Meme video accepted.",
+    };
+  }
+
+  // ----------------------------------------
+  // EVENT CODE
+  // ----------------------------------------
+
+  if (rule.type === "code") {
+    if (containsPossibleCode(message.content)) {
+      return {
+        allowed: true,
+        serious: false,
+        reason:
+          "Possible event code detected.",
+      };
+    }
+
+    if (images.length) {
+      return {
+        allowed: true,
+        serious: false,
+        reason:
+          "Possible event code screenshot accepted.",
+      };
+    }
+
+    return {
+      allowed: false,
+      serious: false,
+      reason:
+        "A valid event code or code screenshot is required.",
+    };
+  }
+
+  // ----------------------------------------
+  // FAN ART
+  // ----------------------------------------
+
+  if (rule.type === "fanart") {
+    if (!images.length) {
+      return {
+        allowed: false,
+        serious: false,
+        reason:
+          "A fan art image is required.",
+      };
+    }
+
+    return classifyImage(
+      images[0].url,
+      "fanart"
+    );
+  }
+
+  // ----------------------------------------
   // BUILD TIPS
-  // ========================================
+  // ----------------------------------------
 
   if (rule.type === "build") {
-
-    const images =
-      getImages(message);
-
-    const videos =
-      getVideos(message);
+    // Media is accepted.
+    if (images.length || videos.length) {
+      return {
+        allowed: true,
+        serious: false,
+        reason:
+          "Build guide media accepted.",
+      };
+    }
 
     const text =
       message.content.trim();
 
-
-    // Media is allowed.
-    // Content should still be related to HOK/build education.
-    if (
-      images.length > 0 ||
-      videos.length > 0
-    ) {
-
+    if (isCasualChat(text)) {
       return {
-        allowed: true,
+        allowed: false,
+        serious: false,
+        reason:
+          "Casual chat is not allowed in the Build Tips channel.",
       };
-
     }
 
-
-    // Text guide
-    if (text.length >= 20) {
-
-      const keywords = [
-
-        "build",
-        "arcana",
-        "item",
-        "items",
-        "equipment",
-        "hero",
-        "lane",
-        "gank",
-        "rotation",
-        "roam",
-        "roaming",
-        "team fight",
-        "teamfight",
-        "objective",
-        "farming",
-        "farm",
-        "skill",
-        "combo",
-        "positioning",
-        "damage",
-        "defense",
-        "defence",
-        "attack",
-        "match",
-        "hok",
-        "honor of kings",
-
-      ];
-
-
-      const lower =
-        text.toLowerCase();
-
-      const hasKeyword =
-        keywords.some(
-          keyword =>
-            lower.includes(keyword)
-        );
-
-
-      if (
-        hasKeyword &&
-        !isCasualChat(text)
-      ) {
-
-        return {
-          allowed: true,
-        };
-
-      }
-
+    if (text.length < 20) {
+      return {
+        allowed: false,
+        serious: false,
+        reason:
+          "A useful build guide or detailed tip is required.",
+      };
     }
 
+    const hasBuildKeyword =
+      /\b(build|arcana|arcane|equipment|item|items|talent|spell|emblem|strategy|guide|damage|defense|lane|hero|roam|jungle|clash|farm|mid|marksman|mage|fighter|tank|support)\b/i.test(
+        text
+      );
+
+    if (!hasBuildKeyword) {
+      return {
+        allowed: false,
+        serious: false,
+        reason:
+          "The text does not appear to contain a useful Honor of Kings build or guide.",
+      };
+    }
 
     return {
-
-      allowed: false,
-
-      reason:
-        "Only useful Honor of Kings build tips, guides, recommendations or educational content are allowed.",
-
+      allowed: true,
       serious: false,
-
+      reason:
+        "Build guide text accepted.",
     };
-
   }
 
-
   // ========================================
-  // UNKNOWN CHANNEL
+  // UNKNOWN RULE
   // ========================================
 
   return {
-
     allowed: true,
-
+    serious: false,
+    reason: "Allowed.",
   };
-
 }
-
-
-// ==========================================
-// STAFF CHECK
-// ==========================================
-
-function isStaff(member) {
-
-  if (!member) return false;
-
-  return member.permissions.has(
-    PermissionsBitField.Flags.ManageMessages
-  );
-
-}
-
 
 // ==========================================
 // MODERATION LOG
 // ==========================================
 
-async function sendModerationLog({
-
-  member,
-  channel,
-  action,
-  duration,
-  reason,
-
-}) {
-
+async function sendModerationLog(embed) {
   if (!MOD_LOG_CHANNEL_ID) return;
 
   try {
-
-    const logChannel =
+    const channel =
       await client.channels.fetch(
         MOD_LOG_CHANNEL_ID
       );
 
-    if (
-      !logChannel ||
-      !logChannel.isTextBased()
-    ) {
-      return;
-    }
+    if (!channel?.isTextBased()) return;
 
-
-    const embed =
-      new EmbedBuilder()
-
-        .setColor(GOLD)
-
-        .setTitle("Moderation Action")
-
-        .addFields(
-
-          {
-            name: "Member",
-            value:
-              `${member.user.tag}\n<@${member.id}>`,
-            inline: true,
-          },
-
-          {
-            name: "Channel",
-            value:
-              `<#${channel.id}>`,
-            inline: true,
-          },
-
-          {
-            name: "Action",
-            value:
-              action,
-            inline: true,
-          },
-
-          {
-            name: "Duration",
-            value:
-              duration || "None",
-            inline: true,
-          },
-
-          {
-            name: "Reason",
-            value:
-              reason || "No reason provided.",
-            inline: false,
-          }
-
-        )
-
-        .setTimestamp();
-
-
-    await logChannel.send({
+    await channel.send({
       embeds: [embed],
     });
-
   } catch (error) {
-
     console.error(
-      "❌ Moderation log error:",
+      "❌ Failed to send moderation log:",
+      error.message
+    );
+  }
+}
+
+// ==========================================
+// TIMEOUT
+// ==========================================
+
+async function timeoutMember(
+  member,
+  minutes,
+  reason
+) {
+  try {
+    if (!member) return false;
+
+    if (member.user.bot) return false;
+
+    if (
+      member.permissions.has(
+        PermissionFlagsBits.ManageMessages
+      )
+    ) {
+      return false;
+    }
+
+    const me =
+      member.guild.members.me;
+
+    if (!me) return false;
+
+    if (
+      !me.permissions.has(
+        PermissionFlagsBits.ModerateMembers
+      )
+    ) {
+      console.warn(
+        "⚠️ Bot lacks Moderate Members permission."
+      );
+
+      return false;
+    }
+
+    if (
+      member.roles.highest.position >=
+      me.roles.highest.position
+    ) {
+      console.warn(
+        `⚠️ Cannot timeout ${member.user.tag}: role hierarchy.`
+      );
+
+      return false;
+    }
+
+    const duration =
+      Math.max(1, minutes) * 60 * 1000;
+
+    await member.timeout(
+      duration,
+      reason
+    );
+
+    await sendModerationLog(
+      new EmbedBuilder()
+        .setColor("#FF9900")
+        .setTitle("⏱️ MEMBER TIMEOUT")
+        .setDescription(
+          `**Member:** ${member}\n` +
+            `**Duration:** ${minutes} minutes\n` +
+            `**Reason:** ${reason}`
+        )
+        .setTimestamp()
+    );
+
+    return true;
+  } catch (error) {
+    console.error(
+      `❌ Timeout failed for ${member?.user?.tag}:`,
       error.message
     );
 
+    return false;
   }
-
 }
 
-
 // ==========================================
-// REGISTER VIOLATION
+// VIOLATION REGISTRATION
 // ==========================================
 
 async function registerViolation(
@@ -1457,583 +1156,115 @@ async function registerViolation(
   reason,
   serious = false
 ) {
+  if (!message.guild) return;
 
   const key =
     `${message.guild.id}:${message.author.id}`;
 
-  const current =
-    violationCounts.get(key) || 0;
-
   const count =
-    current + 1;
+    (violationCounts.get(key) || 0) + 1;
 
   violationCounts.set(
     key,
     count
   );
 
+  let action =
+    "Warning recorded.";
 
-  // ========================================
-  // SERIOUS VIOLATION
-  // ========================================
-
+  // Serious violation
   if (serious) {
-
-    const minutes =
-      SERIOUS_VIOLATION_TIMEOUT_MINUTES;
-
-    await timeoutMember(
-      message.member,
-      minutes,
-      reason,
-      message.channel
-    );
-
-    return;
-  }
-
-
-  // ========================================
-  // REPEATED VIOLATION
-  // ========================================
-
-  if (count >= 3) {
-
-    const minutes =
-      REPEATED_VIOLATION_TIMEOUT_MINUTES;
-
-    await timeoutMember(
-      message.member,
-      minutes,
-      `Repeated channel violations (${count} violations).`,
-      message.channel
-    );
-
-    // Reset after timeout
-    violationCounts.delete(key);
-
-    return;
-  }
-
-
-  // ========================================
-  // NORMAL WARNING
-  // ========================================
-
-  await sendModerationLog({
-
-    member: message.member,
-
-    channel: message.channel,
-
-    action: "Warning",
-
-    duration: "None",
-
-    reason,
-
-  });
-
-}
-
-
-// ==========================================
-// TIMEOUT MEMBER
-// ==========================================
-
-async function timeoutMember(
-  member,
-  minutes,
-  reason,
-  channel
-) {
-
-  if (!member) return;
-
-
-  // Staff bypass
-  if (isStaff(member)) {
-
-    console.log(
-      `⚠️ Staff member ${member.user.tag} was not timed out.`
-    );
-
-    return;
-
-  }
-
-
-  // Check bot permissions
-  const botMember =
-    member.guild.members.me;
-
-  if (!botMember) return;
-
-
-  if (
-    !botMember.permissions.has(
-      PermissionsBitField.Flags.ModerateMembers
-    )
-  ) {
-
-    console.error(
-      "❌ Bot does not have Moderate Members permission."
-    );
-
-    return;
-
-  }
-
-
-  // Role hierarchy
-  if (
-    member.roles.highest.position >=
-    botMember.roles.highest.position
-  ) {
-
-    console.error(
-      `❌ Cannot timeout ${member.user.tag}: role hierarchy.`
-    );
-
-    return;
-
-  }
-
-
-  try {
-
-    await member.timeout(
-
-      minutes * 60 * 1000,
-
-      reason
-
-    );
-
-
-    await sendModerationLog({
-
-      member,
-
-      channel,
-
-      action: "Timeout",
-
-      duration:
-        `${minutes} minutes`,
-
-      reason,
-
-    });
-
-
-    console.log(
-      `⏱️ Timed out ${member.user.tag} for ${minutes} minutes.`
-    );
-
-  } catch (error) {
-
-    console.error(
-      `❌ Failed to timeout ${member.user.tag}:`,
-      error.message
-    );
-
-  }
-
-}
-
-
-// ==========================================
-// STICKY EMBED
-// ==========================================
-
-function createStickyEmbed(rule) {
-
-  const displayName =
-    STICKY_NAMES[rule.type] ||
-    `${AVISALA} ${rule.name}`;
-
-
-  return new EmbedBuilder()
-
-    .setColor(GOLD)
-
-    .setTitle(STICKY_MARKER)
-
-    .setThumbnail(
-      LAMPOON_ICON_URL ||
-      client.user.displayAvatarURL()
-    )
-
-    .setDescription(
-
-      `**${displayName}**\n\n` +
-
-      `${rule.description}\n\n` +
-
-      `💬 **Captions, descriptions, titles and quotes are allowed.**\n\n` +
-
-      `🚫 **Do not reply to another member's post.**\n\n` +
-
-      `🚫 **Unrelated content will be removed.**\n\n` +
-
-      `🚫 **Do not react to messages in this channel.**`
-
-    );
-
-}
-
-
-// ==========================================
-// FIND EXISTING STICKY
-// ==========================================
-
-async function findExistingSticky(channel) {
-
-  try {
-
-    const messages =
-      await channel.messages.fetch({
-        limit: 100,
-      });
-
-
-    const stickies =
-      messages.filter(message =>
-
-        message.author.id ===
-          client.user.id &&
-
-        message.embeds.length > 0 &&
-
-        message.embeds[0].title ===
-          STICKY_MARKER
-
-      );
-
-
-    if (stickies.size === 0) {
-
-      return null;
-
-    }
-
-
-    // Sort oldest -> newest
-    const sorted =
-      [...stickies.values()]
-        .sort(
-          (a, b) =>
-            a.createdTimestamp -
-            b.createdTimestamp
+    const member =
+      await message.guild.members
+        .fetch(message.author.id)
+        .catch(() => null);
+
+    if (member) {
+      const success =
+        await timeoutMember(
+          member,
+          SERIOUS_VIOLATION_TIMEOUT_MINUTES,
+          reason
         );
 
-
-    // Keep the oldest existing sticky
-    const mainSticky =
-      sorted[0];
-
-
-    // Delete all duplicates
-    for (
-      let i = 1;
-      i < sorted.length;
-      i++
-    ) {
-
-      try {
-
-        await sorted[i].delete();
-
-        console.log(
-          `🗑️ Removed duplicate sticky from #${channel.name}`
-        );
-
-      } catch (error) {
-
-        console.error(
-          `Failed to remove duplicate sticky in #${channel.name}:`,
-          error.message
-        );
-
+      if (success) {
+        action =
+          `Timed out for ${SERIOUS_VIOLATION_TIMEOUT_MINUTES} minutes.`;
       }
-
     }
-
-
-    return mainSticky;
-
-  } catch (error) {
-
-    console.error(
-      `❌ Failed to search sticky in #${channel.name}:`,
-      error.message
-    );
-
-    return null;
-
   }
 
-}
+  // Repeated violation
+  else if (count >= 3) {
+    const member =
+      await message.guild.members
+        .fetch(message.author.id)
+        .catch(() => null);
 
-
-// ==========================================
-// ENSURE ONE STICKY
-// ==========================================
-
-async function ensureSticky(
-  channel,
-  rule
-) {
-
-  if (!channel || !rule) {
-    return null;
-  }
-
-
-  try {
-
-    let sticky =
-      stickyMessages.get(
-        channel.id
-      );
-
-
-    // ======================================
-    // CHECK CACHE
-    // ======================================
-
-    if (sticky) {
-
-      try {
-
-        sticky =
-          await channel.messages.fetch(
-            sticky.id
-          );
-
-      } catch {
-
-        sticky = null;
-
-        stickyMessages.delete(
-          channel.id
+    if (member) {
+      const success =
+        await timeoutMember(
+          member,
+          REPEATED_VIOLATION_TIMEOUT_MINUTES,
+          `Repeated channel violations: ${reason}`
         );
 
+      if (success) {
+        action =
+          `Repeated violation timeout: ${REPEATED_VIOLATION_TIMEOUT_MINUTES} minutes.`;
       }
-
     }
-
-
-    // ======================================
-    // SEARCH CHANNEL
-    // ======================================
-
-    if (!sticky) {
-
-      sticky =
-        await findExistingSticky(
-          channel
-        );
-
-    }
-
-
-    const embed =
-      createStickyEmbed(rule);
-
-
-    // ======================================
-    // EDIT EXISTING STICKY
-    // ======================================
-
-    if (sticky) {
-
-      await sticky.edit({
-
-        content: null,
-
-        embeds: [embed],
-
-      });
-
-
-      stickyMessages.set(
-        channel.id,
-        sticky
-      );
-
-
-      console.log(
-        `📌 Sticky updated: #${channel.name}`
-      );
-
-
-      return sticky;
-
-    }
-
-
-    // ======================================
-    // CREATE ONLY IF NONE EXISTS
-    // ======================================
-
-    const newSticky =
-      await channel.send({
-
-        embeds: [embed],
-
-      });
-
-
-    stickyMessages.set(
-      channel.id,
-      newSticky
-    );
-
-
-    console.log(
-      `📌 Sticky created: #${channel.name}`
-    );
-
-
-    return newSticky;
-
-  } catch (error) {
-
-    console.error(
-      `❌ Failed to ensure sticky in #${channel.name}:`,
-      error.message
-    );
-
-    return null;
-
   }
 
+  await sendModerationLog(
+    new EmbedBuilder()
+      .setColor("#FF4444")
+      .setTitle("🚫 CHANNEL VIOLATION")
+      .setDescription(
+        `**Member:** ${message.author}\n` +
+          `**Channel:** ${message.channel}\n` +
+          `**Reason:** ${reason}\n` +
+          `**Violation Count:** ${count}\n` +
+          `**Action:** ${action}`
+      )
+      .setTimestamp()
+  );
 }
 
-
 // ==========================================
-// REFRESH STICKY
-// ==========================================
-
-async function refreshSticky(channel) {
-
-  if (!channel) return;
-
-  const rule =
-    CHANNEL_RULES[channel.id];
-
-  if (!rule) return;
-
-  await ensureSticky(
-    channel,
-    rule
-  );
-
-}
-
-
-// ==========================================
-// INITIALIZE STICKIES
-// ==========================================
-
-async function initializeStickies() {
-
-  console.log(
-    "📌 Initializing channel stickies..."
-  );
-
-
-  for (
-    const [channelId, rule]
-    of Object.entries(CHANNEL_RULES)
-  ) {
-
-    try {
-
-      const channel =
-        await client.channels.fetch(
-          channelId
-        );
-
-
-      if (
-        !channel ||
-        !channel.isTextBased()
-      ) {
-
-        continue;
-
-      }
-
-
-      await ensureSticky(
-        channel,
-        rule
-      );
-
-
-    } catch (error) {
-
-      console.error(
-        `❌ Failed to initialize ${channelId}:`,
-        error.message
-      );
-
-    }
-
-  }
-
-
-  console.log(
-    "✅ Sticky initialization complete."
-  );
-
-}
-
-
-// ==========================================
-// DELETE MESSAGE
+// REMOVE INVALID MESSAGE
 // ==========================================
 
 async function removeMessage(
   message,
-  reason
+  reason,
+  serious = false
 ) {
-
   try {
-
     await message.delete();
-
-    console.log(
-      `🗑️ Removed message from ${message.author.tag}: ${reason}`
-    );
-
   } catch (error) {
-
     console.error(
       "❌ Failed to delete message:",
       error.message
     );
-
   }
-
 
   await registerViolation(
     message,
     reason,
-    false
+    serious
   );
 
+  const rule =
+    CHANNEL_RULES[message.channel.id];
 
-  // Re-ensure sticky
-  await refreshSticky(
-    message.channel
-  );
-
+  if (rule) {
+    await refreshSticky(
+      message.channel,
+      rule
+    );
+  }
 }
-
 
 // ==========================================
 // MESSAGE CREATE
@@ -2041,52 +1272,32 @@ async function removeMessage(
 
 client.on(
   "messageCreate",
-  async message => {
-
+  async (message) => {
     try {
+      // Ignore bots.
+      if (message.author.bot) return;
 
-      // Ignore bots
-      if (message.author.bot) {
-        return;
-      }
-
-
-      // Ignore DMs
-      if (!message.guild) {
-        return;
-      }
-
+      // Ignore DMs.
+      if (!message.guild) return;
 
       const rule =
-        CHANNEL_RULES[
-          message.channel.id
-        ];
+        CHANNEL_RULES[message.channel.id];
 
+      // Ignore channels not controlled by this bot.
+      if (!rule) return;
 
-      // Not a moderated channel
-      if (!rule) {
-        return;
-      }
+      const member =
+        message.member;
 
-
-      // ====================================
-      // STAFF BYPASS
-      // ====================================
-
-      if (
-        isStaff(
-          message.member
-        )
-      ) {
+      // Staff bypass.
+      if (isStaff(member)) {
+        await refreshSticky(
+          message.channel,
+          rule
+        );
 
         return;
-
       }
-
-
-      // ====================================
-      // VALIDATE
-      // ====================================
 
       const result =
         await validateMessage(
@@ -2094,144 +1305,123 @@ client.on(
           rule
         );
 
-
       if (result.allowed) {
-
-        // Keep ONE sticky only.
         await refreshSticky(
-          message.channel
+          message.channel,
+          rule
         );
 
         return;
-
       }
-
-
-      // ====================================
-      // INVALID CONTENT
-      // ====================================
 
       await removeMessage(
         message,
-        result.reason ||
-          "Content does not follow this channel's rules."
+        result.reason,
+        result.serious
       );
-
     } catch (error) {
-
       console.error(
         "❌ messageCreate error:",
         error
       );
-
     }
-
   }
 );
 
-
 // ==========================================
-// REACTION BLOCKER
+// STICKY REACTION PROTECTION
+// ==========================================
+//
+// IMPORTANT:
+// Normal member posts CAN receive reactions.
+//
+// ONLY the bot's sticky message is protected.
+//
+// This prevents the old problem where the bot
+// removed reactions from every message in the
+// configured channels.
 // ==========================================
 
 client.on(
   "messageReactionAdd",
-  async (
-    reaction,
-    user
-  ) => {
-
+  async (reaction, user) => {
     try {
+      if (user.bot) return;
 
-      if (user.bot) {
-        return;
-      }
+      const message =
+        reaction.message;
 
+      const isSticky =
+        message.author?.id === client.user.id &&
+        message.embeds?.some(
+          (embed) =>
+            embed.title === STICKY_MARKER
+        );
 
-      const channel =
-        reaction.message.channel;
+      // Normal member post.
+      // Reactions remain untouched.
+      if (!isSticky) return;
 
-
-      const rule =
-        CHANNEL_RULES[channel.id];
-
-
-      if (!rule) {
-        return;
-      }
-
-
-      // Staff can react
-      const guild =
-        channel.guild;
-
-      const member =
-        await guild.members
-          .fetch(user.id)
-          .catch(() => null);
-
-
-      if (
-        member &&
-        isStaff(member)
-      ) {
-
-        return;
-
-      }
-
-
-      // Remove reaction
+      // Sticky reaction only.
       await reaction.users.remove(
         user.id
       );
 
-
       console.log(
-        `🚫 Removed reaction from ${user.tag} in #${channel.name}`
+        `🚫 Removed ${user.tag}'s reaction from the sticky in #${message.channel.name}`
       );
-
     } catch (error) {
-
       console.error(
-        "❌ Reaction removal error:",
+        "❌ Sticky reaction protection error:",
         error.message
       );
-
     }
-
   }
 );
 
-
 // ==========================================
-// READY
+// STICKY INITIALIZATION
 // ==========================================
 
-client.once(
-  "ready",
-  async () => {
+async function initializeStickies() {
+  console.log(
+    "📌 Initializing channel stickies..."
+  );
 
-    console.log(
-      `✅ Logged in as ${client.user.tag}`
-    );
+  for (
+    const [channelId, rule]
+    of Object.entries(CHANNEL_RULES)
+  ) {
+    try {
+      const channel =
+        await client.channels.fetch(
+          channelId
+        );
 
+      if (!channel?.isTextBased()) {
+        console.warn(
+          `⚠️ Channel ${channelId} is not text-based.`
+        );
 
-    console.log(
-      `📡 Serving ${client.guilds.cache.size} guild(s)`
-    );
+        continue;
+      }
 
-
-    await initializeStickies();
-
-
-    console.log(
-      "🚀 Reminder Bot is fully online."
-    );
-
+      await ensureSticky(
+        channel,
+        rule
+      );
+    } catch (error) {
+      console.error(
+        `❌ Failed to initialize sticky for ${channelId}:`,
+        error.message
+      );
+    }
   }
-);
 
+  console.log(
+    "✅ Sticky initialization complete."
+  );
+}
 
 // ==========================================
 // SLASH COMMANDS
@@ -2240,405 +1430,301 @@ client.once(
 const commands = [
 
   new SlashCommandBuilder()
-
     .setName("sticky-refresh")
-
     .setDescription(
-      "Refresh the sticky message in this channel."
+      "Refresh the sticky message in the current channel."
+    )
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ManageMessages.toString()
     ),
 
-
   new SlashCommandBuilder()
-
     .setName("sticky-remove")
-
     .setDescription(
-      "Remove sticky messages from this channel."
+      "Remove the sticky message from the current channel."
+    )
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ManageMessages.toString()
     ),
 
-
   new SlashCommandBuilder()
-
     .setName("sticky-list")
-
     .setDescription(
-      "Show configured sticky channels."
+      "Show all configured sticky channels."
+    )
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ManageMessages.toString()
     ),
-
 
   new SlashCommandBuilder()
-
     .setName("sticky-setup")
-
     .setDescription(
-      "Create or repair the sticky message in this channel."
+      "Create or update the sticky in the current channel."
+    )
+    .setDefaultMemberPermissions(
+      PermissionFlagsBits.ManageMessages.toString()
     ),
 
-].map(
-  command => command.toJSON()
+].map((command) =>
+  command.toJSON()
 );
-
 
 // ==========================================
 // REGISTER COMMANDS
 // ==========================================
 
 async function registerCommands() {
-
   try {
-
     const rest =
-      new REST({
-        version: "10",
-      }).setToken(TOKEN);
-
+      new REST({ version: "10" })
+        .setToken(TOKEN);
 
     await rest.put(
-
       Routes.applicationGuildCommands(
         CLIENT_ID,
         GUILD_ID
       ),
-
       {
         body: commands,
       }
-
     );
-
 
     console.log(
       "✅ Slash commands registered."
     );
-
   } catch (error) {
-
     console.error(
-      "❌ Failed to register slash commands:",
-      error.message
+      "❌ Slash command registration failed:",
+      error
     );
-
   }
-
 }
 
-
 // ==========================================
-// INTERACTION CREATE
+// INTERACTIONS
 // ==========================================
 
 client.on(
   "interactionCreate",
-  async interaction => {
-
+  async (interaction) => {
     if (!interaction.isChatInputCommand()) {
       return;
     }
 
-
-    // ======================================
-    // STICKY REFRESH
-    // ======================================
-
-    if (
-      interaction.commandName ===
-      "sticky-refresh"
-    ) {
+    try {
+      // --------------------------------------
+      // PERMISSION
+      // --------------------------------------
 
       if (
-        !interaction.memberPermissions.has(
-          PermissionsBitField.Flags.ManageMessages
+        !interaction.memberPermissions?.has(
+          PermissionFlagsBits.ManageMessages
         )
       ) {
-
         return interaction.reply({
-
           content:
-            "❌ You need **Manage Messages** permission.",
-
+            "❌ You need **Manage Messages** permission to use this command.",
           ephemeral: true,
-
         });
-
       }
 
+      // --------------------------------------
+      // RULE
+      // --------------------------------------
 
       const rule =
         CHANNEL_RULES[
-          interaction.channel.id
+          interaction.channelId
         ];
 
-
-      if (!rule) {
-
-        return interaction.reply({
-
-          content:
-            "❌ This channel is not configured for Reminder Bot.",
-
-          ephemeral: true,
-
-        });
-
-      }
-
-
-      await interaction.deferReply({
-        ephemeral: true,
-      });
-
-
-      await refreshSticky(
-        interaction.channel
-      );
-
-
-      await interaction.editReply(
-        "✅ Sticky message refreshed. Only one sticky is kept."
-      );
-
-      return;
-
-    }
-
-
-    // ======================================
-    // STICKY SETUP
-    // ======================================
-
-    if (
-      interaction.commandName ===
-      "sticky-setup"
-    ) {
+      // --------------------------------------
+      // STICKY REFRESH
+      // --------------------------------------
 
       if (
-        !interaction.memberPermissions.has(
-          PermissionsBitField.Flags.ManageMessages
-        )
+        interaction.commandName ===
+        "sticky-refresh"
       ) {
-
-        return interaction.reply({
-
-          content:
-            "❌ You need **Manage Messages** permission.",
-
-          ephemeral: true,
-
-        });
-
-      }
-
-
-      const rule =
-        CHANNEL_RULES[
-          interaction.channel.id
-        ];
-
-
-      if (!rule) {
-
-        return interaction.reply({
-
-          content:
-            "❌ This channel is not configured for Reminder Bot.",
-
-          ephemeral: true,
-
-        });
-
-      }
-
-
-      await interaction.deferReply({
-        ephemeral: true,
-      });
-
-
-      await ensureSticky(
-        interaction.channel,
-        rule
-      );
-
-
-      await interaction.editReply(
-        "✅ Sticky setup complete. Duplicate stickies were removed."
-      );
-
-      return;
-
-    }
-
-
-    // ======================================
-    // STICKY REMOVE
-    // ======================================
-
-    if (
-      interaction.commandName ===
-      "sticky-remove"
-    ) {
-
-      if (
-        !interaction.memberPermissions.has(
-          PermissionsBitField.Flags.ManageMessages
-        )
-      ) {
-
-        return interaction.reply({
-
-          content:
-            "❌ You need **Manage Messages** permission.",
-
-          ephemeral: true,
-
-        });
-
-      }
-
-
-      await interaction.deferReply({
-        ephemeral: true,
-      });
-
-
-      try {
-
-        const messages =
-          await interaction.channel.messages.fetch({
-            limit: 100,
+        if (!rule) {
+          return interaction.reply({
+            content:
+              "❌ This channel does not have a configured sticky.",
+            ephemeral: true,
           });
-
-
-        const stickies =
-          messages.filter(message =>
-
-            message.author.id ===
-              client.user.id &&
-
-            message.embeds.length > 0 &&
-
-            message.embeds[0].title ===
-              STICKY_MARKER
-
-          );
-
-
-        let removed = 0;
-
-
-        for (
-          const sticky
-          of stickies.values()
-        ) {
-
-          try {
-
-            await sticky.delete();
-
-            removed++;
-
-          } catch {}
-
         }
 
-
-        stickyMessages.delete(
-          interaction.channel.id
-        );
-
-
-        await interaction.editReply(
-          `✅ Removed ${removed} sticky message(s).`
-        );
-
-
-      } catch (error) {
-
-        await interaction.editReply(
-          "❌ Failed to remove sticky messages."
-        );
-
-      }
-
-      return;
-
-    }
-
-
-    // ======================================
-    // STICKY LIST
-    // ======================================
-
-    if (
-      interaction.commandName ===
-      "sticky-list"
-    ) {
-
-      if (
-        !interaction.memberPermissions.has(
-          PermissionsBitField.Flags.ManageMessages
-        )
-      ) {
-
-        return interaction.reply({
-
-          content:
-            "❌ You need **Manage Messages** permission.",
-
+        await interaction.deferReply({
           ephemeral: true,
-
         });
 
+        await refreshSticky(
+          interaction.channel,
+          rule
+        );
+
+        return interaction.editReply(
+          "✅ Sticky refreshed."
+        );
       }
 
+      // --------------------------------------
+      // STICKY SETUP
+      // --------------------------------------
 
-      const entries =
-        Object.entries(
-          CHANNEL_RULES
+      if (
+        interaction.commandName ===
+        "sticky-setup"
+      ) {
+        if (!rule) {
+          return interaction.reply({
+            content:
+              "❌ This channel does not have a configured sticky.",
+            ephemeral: true,
+          });
+        }
+
+        await interaction.deferReply({
+          ephemeral: true,
+        });
+
+        await ensureSticky(
+          interaction.channel,
+          rule
         );
 
-
-      const lines =
-        entries.map(
-          ([channelId, rule]) => {
-
-            return (
-              `${STICKY_NAMES[rule.type] || rule.name} → <#${channelId}>`
-            );
-
-          }
+        return interaction.editReply(
+          "✅ Sticky created or updated."
         );
+      }
 
+      // --------------------------------------
+      // STICKY REMOVE
+      // --------------------------------------
 
-      const embed =
-        new EmbedBuilder()
+      if (
+        interaction.commandName ===
+        "sticky-remove"
+      ) {
+        await interaction.deferReply({
+          ephemeral: true,
+        });
 
-          .setColor(GOLD)
-
-          .setTitle(
-            `${AVISALA} CONFIGURED STICKY CHANNELS`
-          )
-
-          .setDescription(
-            lines.join("\n")
+        const sticky =
+          stickyMessages.get(
+            interaction.channelId
+          ) ||
+          await findExistingSticky(
+            interaction.channel
           );
 
+        if (!sticky) {
+          return interaction.editReply(
+            "ℹ️ No sticky was found in this channel."
+          );
+        }
 
-      await interaction.reply({
+        await sticky.delete().catch(() => {});
 
-        embeds: [embed],
+        stickyMessages.delete(
+          interaction.channelId
+        );
 
-        ephemeral: true,
+        return interaction.editReply(
+          "✅ Sticky removed."
+        );
+      }
 
-      });
+      // --------------------------------------
+      // STICKY LIST
+      // --------------------------------------
 
-      return;
+      if (
+        interaction.commandName ===
+        "sticky-list"
+      ) {
+        const entries =
+          Object.entries(CHANNEL_RULES);
 
+        const lines = [];
+
+        for (
+          const [channelId, channelRule]
+          of entries
+        ) {
+          const channel =
+            interaction.guild.channels.cache.get(
+              channelId
+            );
+
+          const name =
+            channel?.name ||
+            channelRule.name;
+
+          lines.push(
+            `• ${AVISALA} **${name}** — <#${channelId}>`
+          );
+        }
+
+        const embed =
+          new EmbedBuilder()
+            .setColor(GOLD)
+            .setTitle(
+              `${AVISALA} CONFIGURED STICKIES`
+            )
+            .setDescription(
+              lines.join("\n")
+            )
+            .setTimestamp();
+
+        return interaction.reply({
+          embeds: [embed],
+          ephemeral: true,
+        });
+      }
+    } catch (error) {
+      console.error(
+        "❌ Interaction error:",
+        error
+      );
+
+      if (
+        interaction.deferred ||
+        interaction.replied
+      ) {
+        await interaction.editReply(
+          "❌ Something went wrong."
+        ).catch(() => {});
+      } else {
+        await interaction.reply({
+          content:
+            "❌ Something went wrong.",
+          ephemeral: true,
+        }).catch(() => {});
+      }
     }
-
   }
 );
 
+// ==========================================
+// READY
+// ==========================================
+
+client.once(
+  "clientReady",
+  async () => {
+    console.log(
+      `🤖 Logged in as ${client.user.tag}`
+    );
+
+    console.log(
+      `🏠 Connected to ${client.guilds.cache.size} guild(s)`
+    );
+
+    await registerCommands();
+
+    await initializeStickies();
+  }
+);
 
 // ==========================================
 // DISCORD ERRORS
@@ -2646,51 +1732,71 @@ client.on(
 
 client.on(
   "error",
-  error => {
-
+  (error) => {
     console.error(
-      "❌ Discord client error:",
+      "❌ Discord Client Error:",
       error
     );
-
   }
 );
 
+client.on(
+  "warn",
+  (warning) => {
+    console.warn(
+      "⚠️ Discord Warning:",
+      warning
+    );
+  }
+);
+
+client.on(
+  "shardError",
+  (error) => {
+    console.error(
+      "❌ Discord Shard Error:",
+      error
+    );
+  }
+);
+
+// ==========================================
+// PROCESS ERRORS
+// ==========================================
 
 process.on(
   "unhandledRejection",
-  error => {
-
+  (error) => {
     console.error(
       "❌ Unhandled promise rejection:",
       error
     );
-
   }
 );
 
-
 process.on(
   "uncaughtException",
-  error => {
-
+  (error) => {
     console.error(
       "❌ Uncaught exception:",
       error
     );
-
   }
 );
 
-
 // ==========================================
-// REGISTER + LOGIN
+// LOGIN
 // ==========================================
 
-(async () => {
-
-  await registerCommands();
-
-  await client.login(TOKEN);
-
-})();
+client.login(TOKEN)
+  .then(() => {
+    console.log(
+      "🔐 Discord login successful."
+    );
+  })
+  .catch((error) => {
+    console.error(
+      "❌ Discord login failed:",
+      error
+    );
+  });
