@@ -1,10 +1,23 @@
 {
-  "code_share": [
-    "done",
-    "used",
-    "invalid",
-    "expired",
-    "not work",
-    "error"
+  "codeReplies": ["done", "used", "invalid", "expired", "not work", "error"],
+  "quickPositive": [
+    "thank", "thanks", "ty", "good", "great", "nice", "helpful",
+    "useful", "awesome", "excellent", "perfect", "done", "got it",
+    "understood", "cool", "wow", "amazing", "agree", "makes sense"
+  ],
+  "strategyKeywords": [
+    "build", "arcana", "item", "items", "equipment", "spell", "emblem",
+    "hero", "lane", "tier", "guide", "tip", "how", "what", "why", "where",
+    "match", "game", "win", "lose", "strategy", "counter", "best", "better",
+    "run", "play", "team", "map", "wave", "farm", "gold", "exp", "level",
+    "damage", "defense", "sustain", "combo", "skill", "talent", "buff", "nerf",
+    "recommend", "suggest", "should", "trying", "works", "opinion", "think",
+    "stat", "stats", "history", "score", "kda", "difficult", "easy", "beginner",
+    "mid", "jungle", "exp lane", "gold lane", "roam", "support", "tank",
+    "mage", "assassin", "marksman", "warrior", "draft", "pick", "ban",
+    "rotation", "objective", "dragon", "titan", "turret", "push", "split",
+    "gank", "focus", "target", "position", "range", "cooldown", "energy",
+    "mana", "health", "heal", "shield", "speed", "slow", "stun", "cc",
+    "crowd control", "burst", "dps", "poke", "engage", "disengage", "kite"
   ]
 }
