@@ -1,4 +1,3 @@
-
 require("dotenv").config();
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -24,15 +23,15 @@ const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || null;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash"; // ✅ UPDATED
 
 const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || null;
 const LAMPOON_ICON_URL = process.env.LAMPOON_ICON_URL || null;
 
 // ========= YOUR THRESHOLDS HERE =========
-const MODERATION_TIMEOUT_MINUTES = 0;      // moderate = 0
-const REPEATED_VIOLATION_TIMEOUT_MINUTES = 0; // repeated = 0
-const SERIOUS_VIOLATION_TIMEOUT_MINUTES = 60; // serious = 60
+const MODERATION_TIMEOUT_MINUTES = 0;
+const REPEATED_VIOLATION_TIMEOUT_MINUTES = 0;
+const SERIOUS_VIOLATION_TIMEOUT_MINUTES = 60;
 
 const STARTUP_CLEANUP_LIMIT = Number(process.env.STARTUP_CLEANUP_LIMIT) || 100;
 const STARTUP_DEEP_CLEANUP = String(process.env.STARTUP_DEEP_CLEANUP || "false").toLowerCase() === "true";
@@ -445,10 +444,11 @@ async function ensureSticky(channel, rule) {
   stickyLocks.set(channel.id, true);
   
   try {
-    // Remove old sticky
+    // ✅ Remove old sticky FIRST — prevents duplicates
     const oldSticky = await findExistingSticky(channel);
     if (oldSticky) {
       await oldSticky.delete().catch(() => {});
+      console.log(`🗑️ Removed old sticky in #${channel.name}`);
     }
     
     // Send new sticky at bottom
@@ -943,7 +943,8 @@ client.once("ready", async () => {
   console.log(`📷 Image moderation: ${genAI ? "✅ Enabled" : "⚠️ Not configured"}`);
   console.log(`🌍 Tagalog support: ✅ Enabled`);
   console.log(`📌 Pinned + 💡 Sticky: SEPARATED — Forum = Pinned ONLY`);
-  console.log("🎭 LAMPOON Reminder Bot is online.");
+  console.log(`🗑️ Sticky cleanup: OLD removed BEFORE new one — NO duplicates ✅`);
+  console.log(`🎭 LAMPOON Reminder Bot is online.`);
   console.log("========================================");
 
   await registerCommands();
