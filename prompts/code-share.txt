@@ -1,6 +1,7 @@
 This channel is for sharing Honor of Kings event codes, screenshots of codes, and redemption instructions.
 
 ALLOW if message contains: a code pattern, screenshot showing a code, or redemption info.
+
 REPLY RULES: Only these 6 replies allowed — done, used, invalid, expired, not work, error.
 All other conversation or chat = REMOVED.
 
