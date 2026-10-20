@@ -1,52 +1,88 @@
 {
-  "channels": {
-    "profile_showcase": {
-      "ids": [],
-      "name": "Profile Showcase",
-      "type": "content_only",
-      "description": "HOK profile pages, match history, gallery, titles, nobility, group badges"
+  "channels": [
+    {
+      "id": "1544771901308796929",
+      "type": "profile",
+      "name": "Community Profile Showcase",
+      "allowReplies": false,
+      "allowChat": false
     },
-    "skin_showcase": {
-      "ids": [],
-      "name": "Skin Showcase",
-      "type": "content_only",
-      "description": "Skin display, wardrobe, gifts, shop, consignment, personalization"
+    {
+      "id": "1544183278779764742",
+      "type": "profile",
+      "name": "Lampoon Profile Showcase",
+      "allowReplies": false,
+      "allowChat": false
     },
-    "hero_highlight": {
-      "ids": [],
-      "name": "Hero Highlight",
-      "type": "video_only",
-      "description": "Gameplay videos and highlights only — no images/screenshots"
+    {
+      "id": "1544771836175196204",
+      "type": "skin",
+      "name": "Community Skin Showcase",
+      "allowReplies": false,
+      "allowChat": false
     },
-    "hok_meme": {
-      "ids": [],
-      "name": "HOK Meme Share",
-      "type": "content_only",
-      "description": "Honor of Kings related memes only — no NSFW content"
+    {
+      "id": "1544183056867393599",
+      "type": "skin",
+      "name": "Lampoon Skin Showcase",
+      "allowReplies": false,
+      "allowChat": false
     },
-    "standpost_meme": {
-      "ids": [],
-      "name": "Standpost Meme",
-      "type": "content_only",
-      "description": "General internet memes — worldwide — no NSFW content"
+    {
+      "id": "1544771692025483315",
+      "type": "hero",
+      "name": "Community Hero Highlight",
+      "allowReplies": false,
+      "allowChat": false
     },
-    "fan_art": {
-      "ids": [],
-      "name": "Fan Art",
-      "type": "content_only",
-      "description": "AI art, pixel art, drawings, stickers, HOK character wallpapers and vibes"
+    {
+      "id": "1544181729097687120",
+      "type": "hero",
+      "name": "Lampoon Hero Highlight",
+      "allowReplies": false,
+      "allowChat": false
     },
-    "strategy_forum": {
-      "ids": ["1562026949646221332"],
+    {
+      "id": "1541020560929198090",
+      "type": "hok-meme",
+      "name": "Community HOK Meme Share",
+      "allowReplies": false,
+      "allowChat": false
+    },
+    {
+      "id": "1543552879942434837",
+      "type": "general-meme",
+      "name": "Lampoon Standpost Meme",
+      "allowReplies": false,
+      "allowChat": false
+    },
+    {
+      "id": "1541019893552644187",
+      "type": "code",
+      "name": "Community Event Code Share",
+      "allowReplies": true,
+      "allowChat": false
+    },
+    {
+      "id": "1544182436353810432",
+      "type": "code",
+      "name": "Lampoon Event Share Code",
+      "allowReplies": true,
+      "allowChat": false
+    },
+    {
+      "id": "1541020395426283521",
+      "type": "fanart",
+      "name": "Community HOK Fan Art Share",
+      "allowReplies": false,
+      "allowChat": false
+    },
+    {
+      "id": "1562026949646221332",
+      "type": "build",
       "name": "HOK Strategy Forum",
-      "type": "content_only",
-      "description": "Match history, stats, tiers, arcana, builds, map awareness, economy, strategy guides"
-    },
-    "code_share": {
-      "ids": [],
-      "name": "Event Code Share",
-      "type": "code_only",
-      "description": "Event codes, screenshots, redemption instructions"
+      "allowReplies": true,
+      "allowChat": true
     }
-  }
+  ]
 }
