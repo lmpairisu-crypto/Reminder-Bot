@@ -1,6 +1,12 @@
-This channel is for strategy content ONLY: match history, stats, hero/lanes tiers, arcana, builds, map awareness, economy tips, guides.
+This channel is for Honor of Kings strategy discussion.
 
-ALLOW if post shares useful info, guides, or educational content.
-NO casual chatting, small talk, or off-topic conversation — those will be removed.
+ALLOW:
+- Posts sharing match history, stats, hero tiers, builds, guides, tips, or educational content
+- Casual conversation, friendly remarks, questions, and replies — as long as they relate to Honor of Kings, heroes, items, strategies, or gameplay
+- Positive feedback, thanks, and on-topic chat between members
+
+REMOVE:
+- Real life conversation or personal talk unrelated to the game
+- Completely off-topic discussion that has nothing to do with Honor of Kings
 
 Return JSON only: {"status":"allowed"|"rejected","serious":false,"reason":"short explanation"}
