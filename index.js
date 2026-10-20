@@ -21,60 +21,29 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
-const OPENAI_API_KEY =
-  process.env.OPENAI_API_KEY || null;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || null;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 
-const OPENAI_VISION_MODEL =
-  process.env.OPENAI_VISION_MODEL || null;
+const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || null;
+const LAMPOON_ICON_URL = process.env.LAMPOON_ICON_URL || null;
 
-const MOD_LOG_CHANNEL_ID =
-  process.env.MOD_LOG_CHANNEL_ID || null;
+const MODERATION_TIMEOUT_MINUTES = Number(process.env.MODERATION_TIMEOUT_MINUTES) || 10;
+const REPEATED_VIOLATION_TIMEOUT_MINUTES = Number(process.env.REPEATED_VIOLATION_TIMEOUT_MINUTES) || 30;
+const SERIOUS_VIOLATION_TIMEOUT_MINUTES = Number(process.env.SERIOUS_VIOLATION_TIMEOUT_MINUTES) || 60;
 
-const LAMPOON_ICON_URL =
-  process.env.LAMPOON_ICON_URL || null;
+const STARTUP_CLEANUP_LIMIT = Number(process.env.STARTUP_CLEANUP_LIMIT) || 100;
+const STARTUP_DEEP_CLEANUP = String(process.env.STARTUP_DEEP_CLEANUP || "false").toLowerCase() === "true";
 
-const MODERATION_TIMEOUT_MINUTES =
-  Number(process.env.MODERATION_TIMEOUT_MINUTES) || 10;
+if (!TOKEN) throw new Error("Missing DISCORD_TOKEN.");
+if (!CLIENT_ID) throw new Error("Missing CLIENT_ID.");
+if (!GUILD_ID) throw new Error("Missing GUILD_ID.");
 
-const REPEATED_VIOLATION_TIMEOUT_MINUTES =
-  Number(process.env.REPEATED_VIOLATION_TIMEOUT_MINUTES) || 30;
-
-const SERIOUS_VIOLATION_TIMEOUT_MINUTES =
-  Number(process.env.SERIOUS_VIOLATION_TIMEOUT_MINUTES) || 60;
-
-const STARTUP_CLEANUP_LIMIT =
-  Number(process.env.STARTUP_CLEANUP_LIMIT) || 100;
-
-const STARTUP_DEEP_CLEANUP =
-  String(process.env.STARTUP_DEEP_CLEANUP || "false")
-    .toLowerCase() === "true";
-
-if (!TOKEN) {
-  throw new Error("Missing DISCORD_TOKEN.");
-}
-
-if (!CLIENT_ID) {
-  throw new Error("Missing CLIENT_ID.");
-}
-
-if (!GUILD_ID) {
-  throw new Error("Missing GUILD_ID.");
-}
-
-if (!OPENAI_API_KEY) {
-  console.warn(
-    "⚠️ OPENAI_API_KEY is not configured. Image AI moderation will be unavailable."
-  );
-}
-
-if (!OPENAI_VISION_MODEL) {
-  console.warn(
-    "⚠️ OPENAI_VISION_MODEL is not configured. Image AI moderation will be unavailable."
-  );
+if (!GEMINI_API_KEY) {
+  console.warn("⚠️ GEMINI_API_KEY is not configured. Image AI moderation will be unavailable.");
 }
 
 // ============================================================
-// HELPERS — MOVED UP BEFORE USE
+// HELPERS
 // ============================================================
 
 function sleep(ms) {
@@ -82,13 +51,12 @@ function sleep(ms) {
 }
 
 // ============================================================
-// OPENAI
+// GEMINI AI
 // ============================================================
 
-const openai =
-  OPENAI_API_KEY && OPENAI_VISION_MODEL
-    ? new OpenAI({ apiKey: OPENAI_API_KEY })
-    : null;
+const genAI = GEMINI_API_KEY
+  ? new GoogleGenerativeAI(GEMINI_API_KEY)
+  : null;
 
 // ============================================================
 // DISCORD CLIENT
@@ -119,7 +87,7 @@ const STICKY_MARKER = "READ CHANNEL'S TOPIC !";
 const AVISALA = "<a:Avisala:1542448826265243660>";
 
 // ============================================================
-// CHANNEL RULES — UPDATED ✅
+// CHANNEL RULES
 // ============================================================
 
 const CHANNEL_RULES = {
@@ -175,7 +143,7 @@ const CHANNEL_RULES = {
   },
   "1541020395426283521": {
     type: "fanart",
-    name: "Connunity HOK Fan Art Share",
+    name: "Community HOK Fan Art Share",
     description: "Share Honor of Kings fan art, drawings, illustrations, edits, and artwork.",
   },
   "1562026949646221332": {
@@ -336,68 +304,72 @@ async function ensureSticky(channel, rule) {
 }
 
 // ============================================================
-// OPENAI CLASSIFICATION
+// GEMINI IMAGE CLASSIFICATION
 // ============================================================
 
-async function askOpenAIImage(imageUrl, channelType) {
-  if (!openai) {
-    return { status: "unknown", serious: false, reason: "OpenAI image moderation is not configured." };
+async function askGeminiImage(imageUrl, channelType) {
+  if (!genAI) {
+    return { status: "unknown", serious: false, reason: "Gemini AI moderation is not configured." };
   }
 
   const instructions = {
-    profile: `Check if image shows Honor of Kings profile/account info. ALLOW if yes. REJECT if clearly unrelated. If uncertain: unknown.`,
-    skin: `Check if image shows HOK skins/previews. ALLOW if yes. REJECT if unrelated. If uncertain: unknown.`,
-    "hok-meme": `Check if image is HOK-related meme. ALLOW if yes. REJECT if unrelated. If uncertain: unknown.`,
-    "general-meme": `Accept any meme/funny image. Only flag serious prohibited content. ALLOW everything else.`,
-    fanart: `Check if image is HOK-related artwork. ALLOW if yes. REJECT if unrelated. Do NOT reject for being AI art. If uncertain: unknown.`,
+    profile: `Check if image shows Honor of Kings profile/account info. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"explanation"}`,
+    skin: `Check if image shows HOK skins/previews. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"explanation"}`,
+    "hok-meme": `Check if image is HOK-related meme. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"explanation"}`,
+    "general-meme": `Accept any meme/funny image. Only flag serious prohibited content. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":true|false,"reason":"explanation"}`,
+    fanart: `Check if image is HOK-related artwork. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"explanation"}`,
   };
 
   const instruction = instructions[channelType] || instructions["general-meme"];
-  const prompt = `${instruction}\n\nReturn ONLY JSON: {"status":"allowed"|"rejected"|"unknown","serious":true|false,"reason":"explanation"}`;
 
   try {
-    const response = await openai.responses.create({
-      model: OPENAI_VISION_MODEL,
-      input: [
-        { role: "user", content: [
-          { type: "input_text", text: prompt },
-          { type: "input_image", image_url: imageUrl },
-        ]},
-      ],
-    });
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
-    const output = response.output_text || "";
+    const imageResp = await fetch(imageUrl).then(r => r.arrayBuffer());
+    const base64Image = Buffer.from(imageResp).toString('base64');
+
+    const result = await model.generateContent([
+      instruction,
+      {
+        inlineData: {
+          data: base64Image,
+          mimeType: "image/png",
+        },
+      },
+    ]);
+
+    const output = result.response.text();
     const match = output.match(/\{[\s\S]*\}/);
     if (!match) return { status: "unknown", serious: false, reason: "Unreadable response." };
 
-    const result = JSON.parse(match[0]);
-    const status = ["allowed", "rejected", "unknown"].includes(result.status) ? result.status : "unknown";
-    return { status, serious: Boolean(result.serious), reason: String(result.reason || "").slice(0, 500) };
+    const parsed = JSON.parse(match[0]);
+    const status = ["allowed", "rejected", "unknown"].includes(parsed.status) ? parsed.status : "unknown";
+    return { status, serious: Boolean(parsed.serious), reason: String(parsed.reason || "").slice(0, 500) };
   } catch (error) {
-    console.error("❌ OpenAI failed:", error.message);
+    console.error("❌ Gemini image check failed:", error.message);
     return { status: "unknown", serious: false, reason: "Check temporarily unavailable." };
   }
 }
 
 // ============================================================
-// TEXT SERIOUS-CONTENT CHECK
+// TEXT SERIOUS-CONTENT CHECK — GEMINI
 // ============================================================
 
 async function checkTextForSeriousViolation(message) {
   const text = message.content?.trim() || "";
-  if (!text || !openai || text.length < 8) return { serious: false, reason: "" };
+  if (!text || !genAI || text.length < 8) return { serious: false, reason: "" };
 
   try {
-    const response = await openai.responses.create({
-      model: OPENAI_VISION_MODEL,
-      input: [{ role: "user", content: [{ type: "input_text", text: `Review for serious violations only. Message: """${text}""" Return JSON: {"serious":true|false,"reason":"short reason"}` }] }],
-    });
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+    const result = await model.generateContent(
+      `Review for serious violations only. Message: """${text}""" Return JSON only: {"serious":true|false,"reason":"short reason"}`
+    );
 
-    const output = response.output_text || "";
+    const output = result.response.text();
     const match = output.match(/\{[\s\S]*\}/);
     if (!match) return { serious: false, reason: "" };
-    const result = JSON.parse(match[0]);
-    return { serious: Boolean(result.serious), reason: String(result.reason || "").slice(0, 500) };
+    const parsed = JSON.parse(match[0]);
+    return { serious: Boolean(parsed.serious), reason: String(parsed.reason || "").slice(0, 500) };
   } catch (error) {
     console.error("❌ Text check failed:", error.message);
     return { serious: false, reason: "" };
@@ -443,7 +415,7 @@ async function validateMessage(message, rule) {
   if (rule.type === "general-meme") {
     if (images.length || videos.length) {
       if (images.length) {
-        const r = await askOpenAIImage(images[0].url, "general-meme");
+        const r = await askGeminiImage(images[0].url, "general-meme");
         if (r.serious) return { allowed: false, serious: true, reason: r.reason };
       }
       return { allowed: true, serious: false, reason: "Accepted." };
@@ -455,7 +427,7 @@ async function validateMessage(message, rule) {
   if (rule.type === "profile") {
     if (!images.length && !videos.length) return { allowed: false, serious: false, reason: "Profile image/video required." };
     if (images.length) {
-      const r = await askOpenAIImage(images[0].url, "profile");
+      const r = await askGeminiImage(images[0].url, "profile");
       if (r.serious) return { allowed: false, serious: true, reason: r.reason };
       if (r.status === "allowed") return { allowed: true, serious: false, reason: r.reason };
       return { allowed: false, serious: false, reason: r.reason || "Not a profile showcase." };
@@ -466,7 +438,7 @@ async function validateMessage(message, rule) {
   if (rule.type === "skin") {
     if (!images.length && !videos.length) return { allowed: false, serious: false, reason: "Skin image/video required." };
     if (images.length) {
-      const r = await askOpenAIImage(images[0].url, "skin");
+      const r = await askGeminiImage(images[0].url, "skin");
       if (r.serious) return { allowed: false, serious: true, reason: r.reason };
       if (r.status === "allowed") return { allowed: true, serious: false, reason: r.reason };
       return { allowed: false, serious: false, reason: r.reason || "Not a skin showcase." };
@@ -482,7 +454,7 @@ async function validateMessage(message, rule) {
   if (rule.type === "hok-meme") {
     if (!images.length && !videos.length) return { allowed: false, serious: false, reason: "Meme image/video required." };
     if (images.length) {
-      const r = await askOpenAIImage(images[0].url, "hok-meme");
+      const r = await askGeminiImage(images[0].url, "hok-meme");
       if (r.serious) return { allowed: false, serious: true, reason: r.reason };
       if (r.status === "allowed") return { allowed: true, serious: false, reason: r.reason };
       return { allowed: false, serious: false, reason: r.reason || "Not a HOK meme." };
@@ -494,7 +466,7 @@ async function validateMessage(message, rule) {
 
   if (rule.type === "fanart") {
     if (!images.length) return { allowed: false, serious: false, reason: "Fan art image required." };
-    const r = await askOpenAIImage(images[0].url, "fanart");
+    const r = await askGeminiImage(images[0].url, "fanart");
     if (r.serious) return { allowed: false, serious: true, reason: r.reason };
     if (r.status === "allowed") return { allowed: true, serious: false, reason: r.reason };
     return { allowed: false, serious: false, reason: r.reason || "Not HOK fan art." };
@@ -740,14 +712,15 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 // ============================================================
-// ✅ FIXED: "clientReady" → "ready" ✅
+// BOT READY
 // ============================================================
 
 client.once("ready", async () => {
   console.log("========================================");
   console.log(`🤖 Logged in as ${client.user.tag}`);
   console.log(`🏠 Connected to ${client.guilds.cache.size} guild(s)`);
-  console.log(`🧠 OpenAI model: ${OPENAI_VISION_MODEL || "NOT CONFIGURED"}`);
+  console.log(`🧠 Gemini model: ${GEMINI_MODEL}`);
+  console.log(`📷 Image moderation: ${genAI ? "✅ Enabled" : "⚠️ Not configured"}`);
   console.log("🎭 LAMPOON Reminder Bot is online.");
   console.log("========================================");
 
@@ -766,7 +739,6 @@ client.on("shardError", (error) => console.error("❌ Shard Error:", error));
 process.on("unhandledRejection", (error) => console.error("❌ Unhandled Rejection:", error));
 process.on("uncaughtException", (error) => console.error("❌ Uncaught Exception:", error));
 
-// ✅ Graceful Shutdown
 process.on("SIGTERM", () => {
   console.log("📤 Shutting down gracefully...");
   client.destroy();
