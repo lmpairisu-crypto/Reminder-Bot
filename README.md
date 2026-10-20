@@ -40,3 +40,12 @@ Gemini API usage depends on the provider's current free-tier eligibility and quo
 ## Important
 
 Do not re-enable historical cleanup for a live server without testing it in a private test channel first. This bot has no automatic startup cleanup.
+
+
+## Moderation preferences (current)
+
+- Ordinary channel-format mistakes are deleted immediately, with no timeout or violation points. These removals are written to the process console only.
+- Replies remain disabled in profile, skin, hero-highlight, and fan-art showcase channels. Replies are enabled in HOK meme, general meme, and strategy channels. Event-code replies retain the existing approved-status-only behavior.
+- Confirmed serious violations are deleted, logged to the moderation log, and can trigger a 60-minute timeout when the bot has the required permissions.
+- AI scanner exceptions and malformed model responses are logged to the moderation log and console. An inconclusive AI scan does not itself punish a member or delete media.
+- The pinned rules embed and embed-only sticky remain enabled; prompts, config, rules, pinned, and src/ai modules are retained.
