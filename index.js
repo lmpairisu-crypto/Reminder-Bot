@@ -119,7 +119,7 @@ const STICKY_MARKER = "READ CHANNEL'S TOPIC !";
 const AVISALA = "<a:Avisala:1542448826265243660>";
 
 // ============================================================
-// CHANNEL RULES
+// CHANNEL RULES — UPDATED ✅
 // ============================================================
 
 const CHANNEL_RULES = {
@@ -175,13 +175,13 @@ const CHANNEL_RULES = {
   },
   "1541020395426283521": {
     type: "fanart",
-    name: "Community HOK Fan Art Share",
+    name: "Connunity HOK Fan Art Share",
     description: "Share Honor of Kings fan art, drawings, illustrations, edits, and artwork.",
   },
-  "1541019792394158080": {
+  "1562026949646221332": {
     type: "build",
-    name: "Community Build Tips Guide",
-    description: "Share useful Honor of Kings builds, guides, tips, strategies, and educational content.",
+    name: "HOK Strategy Forum",
+    description: "Share Match History, Stats, Hero/Lane Tiers, Arcana, Builds, Map Awareness, Economy, and In-Game Strategy guides.",
   },
 };
 
@@ -740,10 +740,10 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 // ============================================================
-// ✅ FIXED: WAS "clientReady" → NOW CORRECTLY "ready"
+// ✅ FIXED: "clientReady" → "ready" ✅
 // ============================================================
 
-client.once("clientReady", async () => {
+client.once("ready", async () => {
   console.log("========================================");
   console.log(`🤖 Logged in as ${client.user.tag}`);
   console.log(`🏠 Connected to ${client.guilds.cache.size} guild(s)`);
@@ -779,4 +779,4 @@ process.on("SIGTERM", () => {
 
 client.login(TOKEN)
   .then(() => console.log("🔐 Discord login successful."))
-  .catch((error) => console.error("❌ Login failed:", error));  
+  .catch((error) => console.error("❌ Login failed:", error));
