@@ -1,6 +1,7 @@
-📖 HOK STRATEGY FORUM
+# 📖 HOK STRATEGY FORUM
 
-Share: Match History • Stats • Hero/Lane Tiers • Arcana • Builds • Map Awareness • Economy • In-game Strategy
+Share & discuss: Match History • Stats • Hero/Lane Tiers • Arcana • Builds • Map Awareness • Economy • In-game Strategy
 
-❌ Please do not chat here — post your guides, tips and resources only.
-Unrelated posts will be removed.
+💡 Casual chatting is welcome — as long as it's related to Honor of Kings and strategy topics!
+
+❌ Please keep conversation HOK/game-related only. Real life talk or completely off-topic posts will be removed.
