@@ -1,3 +1,4 @@
+
 require("dotenv").config();
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -11,6 +12,7 @@ const {
   REST,
   Routes,
   PermissionFlagsBits,
+  ChannelType,
 } = require("discord.js");
 
 // ============================================================
@@ -27,9 +29,10 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
 const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || null;
 const LAMPOON_ICON_URL = process.env.LAMPOON_ICON_URL || null;
 
-const MODERATION_TIMEOUT_MINUTES = Number(process.env.MODERATION_TIMEOUT_MINUTES) || 10;
-const REPEATED_VIOLATION_TIMEOUT_MINUTES = Number(process.env.REPEATED_VIOLATION_TIMEOUT_MINUTES) || 30;
-const SERIOUS_VIOLATION_TIMEOUT_MINUTES = Number(process.env.SERIOUS_VIOLATION_TIMEOUT_MINUTES) || 60;
+// ========= YOUR THRESHOLDS HERE =========
+const MODERATION_TIMEOUT_MINUTES = 0;      // moderate = 0
+const REPEATED_VIOLATION_TIMEOUT_MINUTES = 0; // repeated = 0
+const SERIOUS_VIOLATION_TIMEOUT_MINUTES = 60; // serious = 60
 
 const STARTUP_CLEANUP_LIMIT = Number(process.env.STARTUP_CLEANUP_LIMIT) || 100;
 const STARTUP_DEEP_CLEANUP = String(process.env.STARTUP_DEEP_CLEANUP || "false").toLowerCase() === "true";
@@ -83,7 +86,7 @@ const client = new Client({
 // ============================================================
 
 const GOLD = "#D4AF37";
-const STICKY_MARKER = "READ CHANNEL'S TOPIC !";
+const PINNED_MARKER = "📌 READ CHANNEL'S TOPIC !";
 const AVISALA = "<a:Avisala:1542448826265243660>";
 
 // ============================================================
@@ -178,24 +181,40 @@ const CHANNEL_RULES = {
 };
 
 // ============================================================
-// STICKY TITLES
+// PINNED MESSAGES (shown at top)
 // ============================================================
 
-const STICKY_NAMES = {
+const PINNED_TITLES = {
   profile: `${AVISALA} PROFILE SHOWCASE`,
   skin: `${AVISALA} SKIN SHOWCASE`,
   hero: `${AVISALA} HERO HIGHLIGHT`,
   "hok-meme": `${AVISALA} HOK MEME SHARE`,
   "general-meme": `${AVISALA} LAMPOON STANDPOST MEME`,
-  code: `${AVISALA} 🎁 EVENT CODE SHARE`,
+  code: `${AVISALA} EVENT CODE SHARE`,
   fanart: `${AVISALA} FAN ART`,
-  build: `${AVISALA} 📖 HOK STRATEGY FORUM`,
+  build: `${AVISALA} HOK STRATEGY FORUM`,
+};
+
+// ============================================================
+// STICKY MESSAGES (shown at bottom — TEXT CHANNELS ONLY)
+// ============================================================
+
+const STICKY_MESSAGES = {
+  profile: `💡 Post your profile showcase below! Don't reply to others' posts — thanks! 😊`,
+  skin: `💡 Show off your skins! Keep it clean and enjoy — happy sharing! ✨`,
+  hero: `💡 Share your best plays and highlights below — we wanna see them! 🎬`,
+  "hok-meme": `💡 Keep it funny, keep it HOK — have fun! 🤣`,
+  "general-meme": `💡 Meme away — make someone smile today! No HOK required 😄`,
+  code: `💡 Please reply ONLY with: done / used / invalid / expired / not work / error — thank you! 🙏`,
+  fanart: `💡 Share your amazing art — credit artists where possible! 🎨`,
+  build: `💡 Chat freely about Honor of Kings — English or Tagalog welcome! 🗣️`,
 };
 
 // ============================================================
 // RUNTIME MEMORY
 // ============================================================
 
+const pinnedMessages = new Map();
 const stickyMessages = new Map();
 const violationCounts = new Map();
 const stickyLocks = new Map();
@@ -257,12 +276,10 @@ function isAllowedCodeReply(text) {
 // ============================================================
 
 const QUICK_POSITIVE_WORDS = [
-  // English
   "thank", "thanks", "ty", "good", "great", "nice", "helpful",
   "useful", "awesome", "excellent", "perfect", "done", "got it",
   "understood", "cool", "wow", "amazing", "agree", "makes sense",
   "glad", "hope", "good luck", "gl hf", "have fun", "good game", "gg",
-  // Tagalog / Filipino
   "salamat", "salamat po", "salamat din", "maraming salamat",
   "ganda", "ang ganda", "maganda", "galing", "ang galing", "ang galing mo",
   "ayos", "ayos lang", "ayos yan", "okay", "sige", "sige po",
@@ -274,7 +291,6 @@ const QUICK_POSITIVE_WORDS = [
 ];
 
 const HOK_RELATED_KEYWORDS = [
-  // English — Game Terms
   "build", "arcana", "item", "items", "equipment", "spell", "emblem",
   "hero", "lane", "tier", "guide", "tip", "how", "what", "why", "where",
   "match", "game", "win", "lose", "strategy", "counter", "best", "better",
@@ -292,7 +308,6 @@ const HOK_RELATED_KEYWORDS = [
   "ranking", "season", "battle", "fight", "enemy", "ally", "teammate",
   "question", "answer", "help", "learn", "practice", "mode", "arena",
   "ranking match", "star", "rank up", "climb", "win rate", "matchmaking",
-  // Tagalog / Filipino — Game-Related
   "laro", "maglaro", "naglaro", "lalaro", "laban", "panalo", "talo",
   "nanalo", "natalo", "kalaban", "kakampi", "tropa", "ka-team",
   "hero ko", "gamit", "gamitin", "subukan", "try", "tulong po",
@@ -312,11 +327,11 @@ function isHokRelatedConversation(text) {
 }
 
 // ============================================================
-// STICKY EMBED
+// CREATE PINNED EMBED
 // ============================================================
 
-function createStickyEmbed(rule) {
-  const displayName = STICKY_NAMES[rule.type] || `${AVISALA} ${rule.name}`;
+function createPinnedEmbed(rule) {
+  const displayName = PINNED_TITLES[rule.type] || `${AVISALA} ${rule.name}`;
 
   let replyNote = "🚫 **Do not reply to another member's post.**";
   let extraNote = "";
@@ -331,77 +346,119 @@ function createStickyEmbed(rule) {
 
   const channelNote = rule.type === "general-meme"
     ? "✅ **General memes are allowed. Honor of Kings is NOT required.**"
-    : "🚫 **Unrelated content will be removed without a moderation warning.**";
+    : "🚫 **Unrelated content will be removed.**";
 
   return new EmbedBuilder()
     .setColor(GOLD)
-    .setTitle(STICKY_MARKER)
+    .setTitle(PINNED_MARKER)
     .setThumbnail(LAMPOON_ICON_URL || client.user?.displayAvatarURL() || null)
     .setDescription(
       `**${displayName}**\n\n` +
       `${rule.description}\n\n` +
       `${replyNote}\n` +
       `${extraNote}\n\n` +
-      `⚠️ **Serious prohibited content may receive moderation action.**`
+      `${channelNote}`
     );
 }
 
 // ============================================================
-// STICKY DETECTION
+// DETECT MESSAGES
 // ============================================================
 
-function isStickyMessage(message) {
+function isPinnedMessage(message) {
   return message?.author?.id === client.user?.id &&
-    message.embeds?.some(embed => embed.title === STICKY_MARKER);
+    message.embeds?.some(embed => embed.title === PINNED_MARKER);
+}
+
+function isStickyBotMessage(message) {
+  return message?.author?.id === client.user?.id &&
+    !message.embeds?.length &&
+    STICKY_MESSAGES[Object.keys(STICKY_MESSAGES).find(k => STICKY_MESSAGES[k] === message.content)];
 }
 
 // ============================================================
-// FIND EXISTING STICKIES
+// FIND EXISTING MESSAGES
 // ============================================================
 
-async function findExistingStickies(channel) {
+async function findExistingPinned(channel) {
   try {
-    const messages = await channel.messages.fetch({ limit: 100 });
-    return [...messages.values()]
-      .filter(isStickyMessage)
-      .sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+    const messages = await channel.messages.fetch({ limit: 50 });
+    return [...messages.values()].filter(isPinnedMessage);
   } catch (error) {
-    console.error(`❌ Sticky search failed in #${channel.name}:`, error.message);
+    console.error(`❌ Pinned search failed in #${channel.name}:`, error.message);
     return [];
   }
 }
 
-// ============================================================
-// REMOVE ALL STICKIES
-// ============================================================
-
-async function removeAllStickies(channel) {
-  const stickies = await findExistingStickies(channel);
-  for (const sticky of stickies) await sticky.delete().catch(() => {});
-  stickyMessages.delete(channel.id);
-  return stickies.length;
+async function findExistingSticky(channel) {
+  try {
+    const messages = await channel.messages.fetch({ limit: 50 });
+    return [...messages.values()].find(isStickyBotMessage);
+  } catch (error) {
+    console.error(`❌ Sticky search failed in #${channel.name}:`, error.message);
+    return null;
+  }
 }
 
 // ============================================================
-// ENSURE STICKY AT BOTTOM
+// ENSURE PINNED MESSAGE
+// ============================================================
+
+async function ensurePinned(channel, rule) {
+  if (!channel?.isTextBased()) return null;
+  const embed = createPinnedEmbed(rule);
+  
+  const existing = await findExistingPinned(channel);
+  
+  // Keep only one pinned message
+  for (let i = 1; i < existing.length; i++) {
+    await existing[i].delete().catch(() => {});
+  }
+  
+  if (existing.length > 0) {
+    if (existing[0].embeds[0]?.description !== embed.data.description) {
+      await existing[0].edit({ embeds: [embed] });
+      console.log(`📝 Updated pinned in #${channel.name}`);
+    }
+    return existing[0];
+  } else {
+    const msg = await channel.send({ embeds: [embed] });
+    console.log(`📌 Pinned added to #${channel.name}`);
+    return msg;
+  }
+}
+
+// ============================================================
+// ENSURE STICKY MESSAGE — TEXT CHANNELS ONLY
 // ============================================================
 
 async function ensureSticky(channel, rule) {
   if (!channel?.isTextBased()) return null;
+  
+  // ✅ FORUM CHANNELS = NO STICKY AT ALL
+  if (channel.type === ChannelType.GuildForum) {
+    console.log(`📋 #${channel.name} is Forum Channel → Sticky skipped`);
+    return null;
+  }
+  
   if (stickyLocks.get(channel.id)) return stickyMessages.get(channel.id) || null;
-
   stickyLocks.set(channel.id, true);
+  
   try {
-    const stickies = await findExistingStickies(channel);
-    for (const sticky of stickies) await sticky.delete().catch(() => {});
-    stickyMessages.delete(channel.id);
-
-    const created = await channel.send({ embeds: [createStickyEmbed(rule)] });
-    stickyMessages.set(channel.id, created);
-    console.log(`📌 Sticky placed at bottom of #${channel.name}`);
-    return created;
+    // Remove old sticky
+    const oldSticky = await findExistingSticky(channel);
+    if (oldSticky) {
+      await oldSticky.delete().catch(() => {});
+    }
+    
+    // Send new sticky at bottom
+    const stickyText = STICKY_MESSAGES[rule.type] || STICKY_MESSAGES.profile;
+    const newSticky = await channel.send(stickyText);
+    stickyMessages.set(channel.id, newSticky);
+    console.log(`💡 Sticky refreshed in #${channel.name}`);
+    return newSticky;
   } catch (error) {
-    console.error(`❌ Failed to place sticky in #${channel.name}:`, error.message);
+    console.error(`❌ Sticky failed in #${channel.name}:`, error.message);
     return null;
   } finally {
     stickyLocks.delete(channel.id);
@@ -467,7 +524,7 @@ async function checkTextForSeriousViolation(message) {
   try {
     const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
     const result = await model.generateContent(
-      `Review for serious violations only. Message: """${text}""" Return JSON only: {"serious":true|false,"reason":"short reason"}`
+      `Review for serious violations only — bad words, sexual content, scams, links, harassment. Message: """${text}""" Return JSON only: {"serious":true|false,"reason":"short reason"}`
     );
 
     const output = result.response.text();
@@ -529,15 +586,15 @@ async function validateMessage(message, rule) {
     if (isAllowedCodeReply(message.content)) {
       return { allowed: true, serious: false, reason: "Allowed reply." };
     }
-    return { allowed: false, serious: false, reason: "Only these replies allowed: done, used, invalid, expired, not work, error. Thank you!" };
+    return { allowed: false, serious: false, reason: "Only these replies allowed: done, used, invalid, expired, not work, error." };
   }
 
-  // 📖 STRATEGY FORUM — HOK/game-related chat (English & Tagalog) ALLOWED
+  // 📖 STRATEGY FORUM — HOK/game-related chat ALLOWED
   if (isOnlyText && rule.type === "build") {
     if (isHokRelatedConversation(message.content)) {
       return { allowed: true, serious: false, reason: "HOK-related conversation allowed." };
     }
-    return { allowed: false, serious: false, reason: "Please keep discussion related to Honor of Kings. Thank you!" };
+    return { allowed: false, serious: false, reason: "Please keep discussion related to Honor of Kings." };
   }
 
   if (rule.type === "general-meme") {
@@ -606,7 +663,7 @@ async function validateMessage(message, rule) {
 }
 
 // ============================================================
-// MODERATION HELPERS
+// MODERATION — SIMPLIFIED: ONLY SERIOUS = ACTION
 // ============================================================
 
 async function sendModerationLog(embed) {
@@ -623,6 +680,7 @@ async function timeoutMember(member, minutes, reason) {
     const me = member.guild.members.me;
     if (!me || !me.permissions.has(PermissionFlagsBits.ModerateMembers)) return false;
     if (member.roles.highest.position >= me.roles.highest.position) return false;
+    if (minutes <= 0) return false; // Skip if timeout = 0
     await member.timeout(Math.max(1, minutes) * 60 * 1000, reason);
     await sendModerationLog(
       new EmbedBuilder().setColor("#FF9900").setTitle("⏱️ MEMBER TIMEOUT")
@@ -634,25 +692,29 @@ async function timeoutMember(member, minutes, reason) {
 
 async function registerViolation(message, reason, serious = false) {
   if (!message.guild) return;
+  
+  // Only count/action for SERIOUS violations
+  if (!serious) {
+    await sendModerationLog(
+      new EmbedBuilder().setColor("#888888").setTitle("🗑️ CONTENT REMOVED")
+        .setDescription(`**Member:** ${message.author}\n**Channel:** ${message.channel}\n**Reason:** ${reason}\n**Note:** Non-serious — deleted only`).setTimestamp()
+    );
+    return; // ❌ No violation points for casual stuff
+  }
+
   const key = `${message.guild.id}:${message.author.id}`;
   const count = (violationCounts.get(key) || 0) + 1;
   violationCounts.set(key, count);
 
-  let action = "Warning recorded.";
-  if (serious) {
-    const member = await message.guild.members.fetch(message.author.id).catch(() => null);
-    if (member && await timeoutMember(member, SERIOUS_VIOLATION_TIMEOUT_MINUTES, reason)) {
-      action = `Timed out ${SERIOUS_VIOLATION_TIMEOUT_MINUTES} min.`;
-    }
-  } else if (count >= 3) {
-    const member = await message.guild.members.fetch(message.author.id).catch(() => null);
-    if (member && await timeoutMember(member, REPEATED_VIOLATION_TIMEOUT_MINUTES, `Repeated: ${reason}`)) {
-      action = `Timeout ${REPEATED_VIOLATION_TIMEOUT_MINUTES} min.`;
-    }
+  let action = "Removed.";
+  const member = await message.guild.members.fetch(message.author.id).catch(() => null);
+  if (member && SERIOUS_VIOLATION_TIMEOUT_MINUTES > 0) {
+    const didTimeout = await timeoutMember(member, SERIOUS_VIOLATION_TIMEOUT_MINUTES, reason);
+    if (didTimeout) action = `Timed out ${SERIOUS_VIOLATION_TIMEOUT_MINUTES} min.`;
   }
 
   await sendModerationLog(
-    new EmbedBuilder().setColor("#FF4444").setTitle("🚫 CONTENT VIOLATION")
+    new EmbedBuilder().setColor("#FF4444").setTitle("🚫 SERIOUS VIOLATION")
       .setDescription(`**Member:** ${message.author}\n**Channel:** ${message.channel}\n**Reason:** ${reason}\n**Count:** ${count}\n**Action:** ${action}`).setTimestamp()
   );
 }
@@ -671,10 +733,13 @@ async function deleteAndModerate(message, reason, serious) {
 async function processMessage(message, rule) {
   const result = await validateMessage(message, rule);
   if (result.allowed) return { action: "allowed", result };
+  
   if (result.serious) {
     await deleteAndModerate(message, result.reason, true);
     return { action: "serious", result };
   }
+  
+  // Casual/off-topic: DELETE ONLY — no warning, no points
   await deleteOnly(message, result.reason);
   return { action: "deleted", result };
 }
@@ -744,14 +809,16 @@ client.on("messageReactionAdd", async (reaction, user) => {
   try {
     if (user.bot) return;
     const message = reaction.message;
-    if (!isStickyMessage(message)) return;
-    await reaction.users.remove(user.id);
-    console.log(`🚫 Removed reaction from sticky in #${message.channel.name}`);
+    // Allow reactions on pinned messages — only block on sticky messages
+    if (isStickyBotMessage(message)) {
+      await reaction.users.remove(user.id);
+      console.log(`🚫 Removed reaction from sticky in #${message.channel.name}`);
+    }
   } catch (e) { console.error("❌ Reaction error:", e.message); }
 });
 
 // ============================================================
-// CHANNEL INIT — STICKY FIRST, THEN SCAN
+// CHANNEL INIT — PINNED FIRST, THEN STICKY
 // ============================================================
 
 async function initializeChannel(channelId, rule) {
@@ -761,8 +828,13 @@ async function initializeChannel(channelId, rule) {
       console.warn(`⚠️ ${channelId} is not text channel.`);
       return;
     }
-    await removeAllStickies(channel);
+    
+    // ✅ PINNED — ALL channels
+    await ensurePinned(channel, rule);
+    
+    // ✅ STICKY — TEXT CHANNELS ONLY (skipped on Forum)
     await ensureSticky(channel, rule);
+    
     await cleanupChannelOnStartup(channel, rule);
   } catch (e) { console.error(`❌ Init failed ${channelId}:`, e.message); }
 }
@@ -807,6 +879,9 @@ client.on("interactionCreate", async (interaction) => {
 
     if (interaction.commandName === "sticky-refresh") {
       if (!rule) return interaction.reply({ content: "❌ No rule for this channel.", ephemeral: true });
+      if (interaction.channel.type === ChannelType.GuildForum) {
+        return interaction.reply({ content: "ℹ️ Forum channel — no sticky here.", ephemeral: true });
+      }
       await interaction.deferReply({ ephemeral: true });
       await ensureSticky(interaction.channel, rule);
       return interaction.editReply("✅ Sticky refreshed.");
@@ -815,21 +890,26 @@ client.on("interactionCreate", async (interaction) => {
     if (interaction.commandName === "sticky-setup") {
       if (!rule) return interaction.reply({ content: "❌ No rule for this channel.", ephemeral: true });
       await interaction.deferReply({ ephemeral: true });
+      await ensurePinned(interaction.channel, rule);
       await ensureSticky(interaction.channel, rule);
-      return interaction.editReply("✅ Sticky created.");
+      return interaction.editReply("✅ Pinned + sticky set up.");
     }
 
     if (interaction.commandName === "sticky-remove") {
       await interaction.deferReply({ ephemeral: true });
-      const n = await removeAllStickies(interaction.channel);
-      return interaction.editReply(n ? `✅ Removed ${n} sticky.` : "ℹ️ No sticky found.");
+      const old = await findExistingSticky(interaction.channel);
+      if (old) {
+        await old.delete();
+        return interaction.editReply("✅ Sticky removed.");
+      }
+      return interaction.editReply("ℹ️ No sticky found.");
     }
 
     if (interaction.commandName === "sticky-list") {
       const list = Object.entries(CHANNEL_RULES).map(([id, r]) => {
         const modeNote = r.type === "code" ? " — 6 replies only" :
-                         r.type === "build" ? " — HOK chat OK (English/Tagalog)" : "";
-        return `• ${AVISALA} **${r.name}**${modeNote} — <#${id}>`;
+                         r.type === "build" ? " — HOK chat OK" : "";
+        return `• ${PINNED_TITLES[r.type] || r.name}${modeNote} — <#${id}>`;
       }).join("\n");
       return interaction.reply({ embeds: [new EmbedBuilder().setColor(GOLD).setTitle(`${AVISALA} CONFIGURED`).setDescription(list).setTimestamp()], ephemeral: true });
     }
@@ -858,9 +938,11 @@ client.once("ready", async () => {
   console.log("========================================");
   console.log(`🤖 Logged in as ${client.user.tag}`);
   console.log(`🏠 Connected to ${client.guilds.cache.size} guild(s)`);
+  console.log(`⏱️ Thresholds: Moderate=${MODERATION_TIMEOUT_MINUTES}m | Repeated=${REPEATED_VIOLATION_TIMEOUT_MINUTES}m | Serious=${SERIOUS_VIOLATION_TIMEOUT_MINUTES}m`);
   console.log(`🧠 Gemini model: ${GEMINI_MODEL}`);
   console.log(`📷 Image moderation: ${genAI ? "✅ Enabled" : "⚠️ Not configured"}`);
   console.log(`🌍 Tagalog support: ✅ Enabled`);
+  console.log(`📌 Pinned + 💡 Sticky: SEPARATED — Forum = Pinned ONLY`);
   console.log("🎭 LAMPOON Reminder Bot is online.");
   console.log("========================================");
 
