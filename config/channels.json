@@ -1,0 +1,52 @@
+{
+  "channels": {
+    "profile_showcase": {
+      "ids": [],
+      "name": "Profile Showcase",
+      "type": "content_only",
+      "description": "HOK profile pages, match history, gallery, titles, nobility, group badges"
+    },
+    "skin_showcase": {
+      "ids": [],
+      "name": "Skin Showcase",
+      "type": "content_only",
+      "description": "Skin display, wardrobe, gifts, shop, consignment, personalization"
+    },
+    "hero_highlight": {
+      "ids": [],
+      "name": "Hero Highlight",
+      "type": "video_only",
+      "description": "Gameplay videos and highlights only — no images/screenshots"
+    },
+    "hok_meme": {
+      "ids": [],
+      "name": "HOK Meme Share",
+      "type": "content_only",
+      "description": "Honor of Kings related memes only — no NSFW content"
+    },
+    "standpost_meme": {
+      "ids": [],
+      "name": "Standpost Meme",
+      "type": "content_only",
+      "description": "General internet memes — worldwide — no NSFW content"
+    },
+    "fan_art": {
+      "ids": [],
+      "name": "Fan Art",
+      "type": "content_only",
+      "description": "AI art, pixel art, drawings, stickers, HOK character wallpapers and vibes"
+    },
+    "strategy_forum": {
+      "ids": ["1562026949646221332"],
+      "name": "HOK Strategy Forum",
+      "type": "content_only",
+      "description": "Match history, stats, tiers, arcana, builds, map awareness, economy, strategy guides"
+    },
+    "code_share": {
+      "ids": [],
+      "name": "Event Code Share",
+      "type": "code_only",
+      "description": "Event codes, screenshots, redemption instructions"
+    }
+  }
+}
