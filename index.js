@@ -95,61 +95,85 @@ const CHANNEL_RULES = {
     type: "profile",
     name: "Community Profile Showcase",
     description: "Share your Honor of Kings profile and profile showcase.",
+    allowReplies: false,
+    allowChat: false,
   },
   "1544183278779764742": {
     type: "profile",
     name: "Lampoon Profile Showcase",
     description: "Share your Honor of Kings profile and profile showcase.",
+    allowReplies: false,
+    allowChat: false,
   },
   "1544771836175196204": {
     type: "skin",
     name: "Community Skin Showcase",
     description: "Share Honor of Kings skins, skin previews, collections, reveals, or skin-related screenshots.",
+    allowReplies: false,
+    allowChat: false,
   },
   "1544183056867393599": {
     type: "skin",
     name: "Lampoon Skin Showcase",
     description: "Share Honor of Kings skins, skin previews, collections, reveals, or skin-related screenshots.",
+    allowReplies: false,
+    allowChat: false,
   },
   "1544771692025483315": {
     type: "hero",
     name: "Community Hero Highlight",
     description: "Share Honor of Kings Hero Highlight videos.",
+    allowReplies: false,
+    allowChat: false,
   },
   "1544181729097687120": {
     type: "hero",
     name: "Lampoon Hero Highlight",
     description: "Share Honor of Kings Hero Highlight videos.",
+    allowReplies: false,
+    allowChat: false,
   },
   "1541020560929198090": {
     type: "hok-meme",
     name: "Community HOK Meme Share",
     description: "Share Honor of Kings memes, funny screenshots, edits, reactions, and parody content.",
+    allowReplies: false,
+    allowChat: false,
   },
   "1543552879942434837": {
     type: "general-meme",
     name: "Lampoon Standpost Meme",
     description: "Share general memes, funny images, reactions, edits, entertainment, and Honor of Kings memes.",
+    allowReplies: false,
+    allowChat: false,
   },
   "1541019893552644187": {
     type: "code",
     name: "Community Event Code Share",
-    description: "Share valid Honor of Kings event codes and code screenshots.",
+    description: "Share Honor of Kings event codes, redemption screenshots, and instructions.",
+    allowReplies: true,
+    allowChat: false,
   },
   "1544182436353810432": {
     type: "code",
     name: "Lampoon Event Share Code",
-    description: "Share valid Honor of Kings event codes and code screenshots.",
+    description: "Share Honor of Kings event codes, redemption screenshots, and instructions.",
+    allowReplies: true,
+    allowChat: false,
   },
   "1541020395426283521": {
     type: "fanart",
     name: "Community HOK Fan Art Share",
     description: "Share Honor of Kings fan art, drawings, illustrations, edits, and artwork.",
+    allowReplies: false,
+    allowChat: false,
   },
   "1562026949646221332": {
     type: "build",
     name: "HOK Strategy Forum",
-    description: "Share Match History, Stats, Hero/Lane Tiers, Arcana, Builds, Map Awareness, Economy, and In-Game Strategy guides.",
+    description: "Match History • Stats • Hero/Lane Tiers • Arcana • Builds • Map Awareness • Economy • In-game Strategy",
+    allowReplies: true,
+    allowChat: true,
   },
 };
 
@@ -163,9 +187,9 @@ const STICKY_NAMES = {
   hero: `${AVISALA} HERO HIGHLIGHT`,
   "hok-meme": `${AVISALA} HOK MEME SHARE`,
   "general-meme": `${AVISALA} LAMPOON STANDPOST MEME`,
-  code: `${AVISALA} EVENT CODE SHARE`,
+  code: `${AVISALA} 🎁 EVENT CODE SHARE`,
   fanart: `${AVISALA} FAN ART`,
-  build: `${AVISALA} BUILD TIPS GUIDE`,
+  build: `${AVISALA} 📖 HOK STRATEGY FORUM`,
 };
 
 // ============================================================
@@ -218,11 +242,93 @@ function containsPossibleCode(text) {
 }
 
 // ============================================================
+// ALLOWED REPLIES — CODE CHANNEL
+// ============================================================
+
+const ALLOWED_CODE_REPLIES = ["done", "used", "invalid", "expired", "not work", "error"];
+
+function isAllowedCodeReply(text) {
+  const clean = text.trim().toLowerCase();
+  return ALLOWED_CODE_REPLIES.some(reply => clean === reply || clean.includes(reply));
+}
+
+// ============================================================
+// STRATEGY FORUM — KEYWORDS (English + Tagalog)
+// ============================================================
+
+const QUICK_POSITIVE_WORDS = [
+  // English
+  "thank", "thanks", "ty", "good", "great", "nice", "helpful",
+  "useful", "awesome", "excellent", "perfect", "done", "got it",
+  "understood", "cool", "wow", "amazing", "agree", "makes sense",
+  "glad", "hope", "good luck", "gl hf", "have fun", "good game", "gg",
+  // Tagalog / Filipino
+  "salamat", "salamat po", "salamat din", "maraming salamat",
+  "ganda", "ang ganda", "maganda", "galing", "ang galing", "ang galing mo",
+  "ayos", "ayos lang", "ayos yan", "okay", "sige", "sige po",
+  "tulong", "salamat sa tulong", "paano", "bakit", "saan",
+  "opo", "oo", "hindi", "syempre", "tama", "mali",
+  "ingat", "good luck", "kaya mo yan", "laban lang", "panalo tayo",
+  "malas", "galingan mo", "kaya natin", "pahinga", "laro tayo",
+  "babye", "kita kits", "see you", "ingat kayo"
+];
+
+const HOK_RELATED_KEYWORDS = [
+  // English — Game Terms
+  "build", "arcana", "item", "items", "equipment", "spell", "emblem",
+  "hero", "lane", "tier", "guide", "tip", "how", "what", "why", "where",
+  "match", "game", "win", "lose", "strategy", "counter", "best", "better",
+  "run", "play", "team", "map", "wave", "farm", "gold", "exp", "level",
+  "damage", "defense", "sustain", "combo", "skill", "talent", "buff", "nerf",
+  "recommend", "suggest", "should", "trying", "works", "opinion", "think",
+  "stat", "stats", "history", "score", "kda", "difficult", "easy", "beginner",
+  "mid", "jungle", "exp lane", "gold lane", "roam", "support", "tank",
+  "mage", "assassin", "marksman", "warrior", "draft", "pick", "ban",
+  "rotation", "objective", "dragon", "titan", "turret", "push", "split",
+  "gank", "focus", "target", "position", "range", "cooldown", "energy",
+  "mana", "health", "heal", "shield", "speed", "slow", "stun", "cc",
+  "crowd control", "burst", "dps", "poke", "engage", "disengage", "kite",
+  "honor of kings", "hok", "patch", "update", "meta", "rank",
+  "ranking", "season", "battle", "fight", "enemy", "ally", "teammate",
+  "question", "answer", "help", "learn", "practice", "mode", "arena",
+  "ranking match", "star", "rank up", "climb", "win rate", "matchmaking",
+  // Tagalog / Filipino — Game-Related
+  "laro", "maglaro", "naglaro", "lalaro", "laban", "panalo", "talo",
+  "nanalo", "natalo", "kalaban", "kakampi", "tropa", "ka-team",
+  "hero ko", "gamit", "gamitin", "subukan", "try", "tulong po",
+  "paano gamitin", "ano ba", "may alam ba", "tanong lang po",
+  "suggestion", "opinyon", "ano sa tingin niyo", "maganda ba",
+  "mas okay ba", "mas maganda ba", "mas malakas ba", "try ko yan",
+  "gumana", "hindi gumana", "gusto ko malaman", "panoorin niyo",
+  "tignan niyo", "mas maganda", "mas malakas", "mabilis", "matigas",
+  "pagkatalo", "panalo tayo", "laban lang", "kaya natin", "galingan natin",
+  "ranked", "ranked match", "pataas ng rank", "star points", "season pass"
+];
+
+function isHokRelatedConversation(text) {
+  const lower = text.toLowerCase();
+  return QUICK_POSITIVE_WORDS.some(word => lower.includes(word)) ||
+         HOK_RELATED_KEYWORDS.some(word => lower.includes(word));
+}
+
+// ============================================================
 // STICKY EMBED
 // ============================================================
 
 function createStickyEmbed(rule) {
   const displayName = STICKY_NAMES[rule.type] || `${AVISALA} ${rule.name}`;
+
+  let replyNote = "🚫 **Do not reply to another member's post.**";
+  let extraNote = "";
+
+  if (rule.type === "code") {
+    replyNote = "✅ You may ONLY reply with these:\n• ✅ **done** — successfully claimed\n• ⚠️ **used** — already claimed by someone\n• ❌ **invalid** — code not recognized\n• ⏰ **expired** — code no longer active\n• 🔧 **not work** — couldn't redeem\n• 🐛 **error** — something went wrong";
+    extraNote = "\n❌ All other replies or chat will be removed.";
+  } else if (rule.type === "build") {
+    replyNote = "💡 Casual chatting is welcome — as long as it's related to Honor of Kings! English or Tagalog is fine.";
+    extraNote = "\n❌ Real life talk or completely off-topic posts will be removed.";
+  }
+
   const channelNote = rule.type === "general-meme"
     ? "✅ **General memes are allowed. Honor of Kings is NOT required.**"
     : "🚫 **Unrelated content will be removed without a moderation warning.**";
@@ -234,9 +340,8 @@ function createStickyEmbed(rule) {
     .setDescription(
       `**${displayName}**\n\n` +
       `${rule.description}\n\n` +
-      `💬 **Captions, descriptions, titles and quotes are allowed.**\n\n` +
-      `🚫 **Do not reply to another member's post.**\n\n` +
-      `${channelNote}\n\n` +
+      `${replyNote}\n` +
+      `${extraNote}\n\n` +
       `⚠️ **Serious prohibited content may receive moderation action.**`
     );
 }
@@ -387,16 +492,16 @@ function validateEventCode(message) {
   return { allowed: false, serious: false, reason: "No code found." };
 }
 
-function validateBuild(message) {
+function validateBuildPost(message) {
   const images = getImages(message);
   const videos = getVideos(message);
   if (images.length || videos.length) return { allowed: true, serious: false, reason: "Media accepted." };
   const text = message.content.trim();
-  if (text.length < 20) return { allowed: false, serious: false, reason: "Too short." };
-  if (/\b(build|arcana|equipment|item|talent|spell|emblem|strategy|guide)\b/i.test(text)) {
-    return { allowed: true, serious: false, reason: "Build guide accepted." };
+  if (text.length < 15) return { allowed: false, serious: false, reason: "Post too short." };
+  if (isHokRelatedConversation(text)) {
+    return { allowed: true, serious: false, reason: "On-topic conversation allowed." };
   }
-  return { allowed: false, serious: false, reason: "Not a build guide." };
+  return { allowed: false, serious: false, reason: "Please keep discussion related to Honor of Kings. Thank you!" };
 }
 
 // ============================================================
@@ -410,7 +515,30 @@ async function validateMessage(message, rule) {
   const seriousText = await checkTextForSeriousViolation(message);
   if (seriousText.serious) return { allowed: false, serious: true, reason: seriousText.reason };
 
-  if (message.reference) return { allowed: false, serious: false, reason: "Replies are not allowed." };
+  // Block replies where not allowed
+  if (message.reference && !rule.allowReplies) {
+    return { allowed: false, serious: false, reason: "Replies are not allowed in this channel." };
+  }
+
+  const hasMedia = images.length > 0 || videos.length > 0;
+  const hasCode = containsPossibleCode(message.content);
+  const isOnlyText = !hasMedia && !hasCode && message.content.trim().length > 0;
+
+  // 🎁 CODE CHANNEL — Only 6 specific replies allowed
+  if (isOnlyText && rule.type === "code") {
+    if (isAllowedCodeReply(message.content)) {
+      return { allowed: true, serious: false, reason: "Allowed reply." };
+    }
+    return { allowed: false, serious: false, reason: "Only these replies allowed: done, used, invalid, expired, not work, error. Thank you!" };
+  }
+
+  // 📖 STRATEGY FORUM — HOK/game-related chat (English & Tagalog) ALLOWED
+  if (isOnlyText && rule.type === "build") {
+    if (isHokRelatedConversation(message.content)) {
+      return { allowed: true, serious: false, reason: "HOK-related conversation allowed." };
+    }
+    return { allowed: false, serious: false, reason: "Please keep discussion related to Honor of Kings. Thank you!" };
+  }
 
   if (rule.type === "general-meme") {
     if (images.length || videos.length) {
@@ -472,7 +600,7 @@ async function validateMessage(message, rule) {
     return { allowed: false, serious: false, reason: r.reason || "Not HOK fan art." };
   }
 
-  if (rule.type === "build") return validateBuild(message);
+  if (rule.type === "build") return validateBuildPost(message);
 
   return { allowed: true, serious: false, reason: "Allowed." };
 }
@@ -536,6 +664,7 @@ async function deleteOnly(message, reason) {
 
 async function deleteAndModerate(message, reason, serious) {
   await message.delete().catch(e => console.error("❌ Delete failed:", e.message));
+  await message.reactions.removeAll().catch(err => console.log('⚠️ Could not remove reactions:', err.message));
   await registerViolation(message, reason, serious);
 }
 
@@ -557,6 +686,12 @@ async function processMessage(message, rule) {
 async function cleanupChannelOnStartup(channel, rule) {
   if (!channel?.isTextBased() || startupCleanupDone.has(channel.id)) return;
   startupCleanupDone.add(channel.id);
+
+  if (STARTUP_CLEANUP_LIMIT <= 0) {
+    console.log(`🧹 Skipped #${channel.name}: startup cleanup disabled`);
+    return;
+  }
+
   console.log(`🧹 Cleaning #${channel.name}...`);
 
   try {
@@ -616,7 +751,7 @@ client.on("messageReactionAdd", async (reaction, user) => {
 });
 
 // ============================================================
-// CHANNEL INIT
+// CHANNEL INIT — STICKY FIRST, THEN SCAN
 // ============================================================
 
 async function initializeChannel(channelId, rule) {
@@ -627,8 +762,8 @@ async function initializeChannel(channelId, rule) {
       return;
     }
     await removeAllStickies(channel);
-    await cleanupChannelOnStartup(channel, rule);
     await ensureSticky(channel, rule);
+    await cleanupChannelOnStartup(channel, rule);
   } catch (e) { console.error(`❌ Init failed ${channelId}:`, e.message); }
 }
 
@@ -691,7 +826,11 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (interaction.commandName === "sticky-list") {
-      const list = Object.entries(CHANNEL_RULES).map(([id, r]) => `• ${AVISALA} **${r.name}** — <#${id}>`).join("\n");
+      const list = Object.entries(CHANNEL_RULES).map(([id, r]) => {
+        const modeNote = r.type === "code" ? " — 6 replies only" :
+                         r.type === "build" ? " — HOK chat OK (English/Tagalog)" : "";
+        return `• ${AVISALA} **${r.name}**${modeNote} — <#${id}>`;
+      }).join("\n");
       return interaction.reply({ embeds: [new EmbedBuilder().setColor(GOLD).setTitle(`${AVISALA} CONFIGURED`).setDescription(list).setTimestamp()], ephemeral: true });
     }
 
@@ -721,6 +860,7 @@ client.once("ready", async () => {
   console.log(`🏠 Connected to ${client.guilds.cache.size} guild(s)`);
   console.log(`🧠 Gemini model: ${GEMINI_MODEL}`);
   console.log(`📷 Image moderation: ${genAI ? "✅ Enabled" : "⚠️ Not configured"}`);
+  console.log(`🌍 Tagalog support: ✅ Enabled`);
   console.log("🎭 LAMPOON Reminder Bot is online.");
   console.log("========================================");
 
