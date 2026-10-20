@@ -1,0 +1,7 @@
+Check if the image shows Honor of Kings skins, skin previews, wardrobe screen, collection, skin reveals, shop screen, gifts, or personalization screen.
+
+ALLOW if yes — clearly skin-related content.
+REJECT if it's clearly unrelated or not HOK.
+If uncertain — return unknown.
+
+Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}
