@@ -4,7 +4,7 @@
   "description": "Honor of Kings Community Server Moderation Bot",
   "main": "src/bot.js",
   "scripts": {
-    "start": "node src/bot.js",
+    "start": "node index.js",
     "dev": "node --watch src/bot.js"
   },
   "dependencies": {
