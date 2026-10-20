@@ -1,0 +1,6 @@
+This channel is for strategy content ONLY: match history, stats, hero/lanes tiers, arcana, builds, map awareness, economy tips, guides.
+
+ALLOW if post shares useful info, guides, or educational content.
+NO casual chatting, small talk, or off-topic conversation — those will be removed.
+
+Return JSON only: {"status":"allowed"|"rejected","serious":false,"reason":"short explanation"}
