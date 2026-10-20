@@ -1,0 +1,7 @@
+Check if the image is fan art — drawings, illustrations, edits, pixel art, AI art, stickers, wallpapers of Honor of Kings characters or themes.
+
+ALLOW if it's artwork — do NOT reject just for being AI art.
+REJECT if it's a regular screenshot or unrelated image.
+If uncertain — return unknown.
+
+Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}
