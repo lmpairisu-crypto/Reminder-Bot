@@ -934,7 +934,7 @@ client.on("interactionCreate", async (interaction) => {
 // BOT READY
 // ============================================================
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   console.log("========================================");
   console.log(`🤖 Logged in as ${client.user.tag}`);
   console.log(`🏠 Connected to ${client.guilds.cache.size} guild(s)`);
