@@ -23,7 +23,7 @@ const GUILD_ID = process.env.GUILD_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || null;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || null;
-const LAMPOON_ICON_URL = process.env.LAMPOON_ICON_URL || null;
+const LAMPOON_ICON_URL = process.env.LAMPOON_ICON_URL || "https://cdn.discordapp.com/attachments/1532817641490874491/1562134042248478750/Dofoto_20261021_000232084.png?ex=6ad98af2&is=6ad83972&hm=795eb8acb674ed9005ce69ff28781ebeb87aeaab98be3ab60217d4ae035cdcf8&";
 const MODERATION_TIMEOUT_MINUTES = 0;
 const REPEATED_VIOLATION_TIMEOUT_MINUTES = 0;
 const SERIOUS_VIOLATION_TIMEOUT_MINUTES = 60;
@@ -31,6 +31,13 @@ const GOLD = "#D4AF37";
 const PINNED_MARKER = "📌 READ CHANNEL'S TOPIC !";
 const STICKY_MARKER = "\u2063LMP_REMINDER_STICKY\u2063";
 const AVISALA = "<a:Avisala:1542448826265243660>";
+
+function applyLampoonFooter(embed) {
+  const iconURL = LAMPOON_ICON_URL || client.user?.displayAvatarURL({ extension: "png", size: 128 });
+  const footer = { text: "LAMPOON Moderation" };
+  if (iconURL) footer.iconURL = iconURL;
+  return embed.setFooter(footer);
+}
 
 const IMAGE_PROMPTS = {
     profile: `Check whether this image is an Honor of Kings profile/account showcase. Do not infer violations from uncertain images. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
@@ -413,11 +420,11 @@ function createPinnedEmbed(rule) {
     details = [rule.description, replyNote, channelNote];
   }
 
-  return new EmbedBuilder()
+  return applyLampoonFooter(new EmbedBuilder()
     .setColor(GOLD)
     .setTitle(PINNED_MARKER)
     .setThumbnail(LAMPOON_ICON_URL || client.user?.displayAvatarURL({ extension: "png", size: 256 }) || null)
-    .setDescription(`**${displayName}**\n\n${details.filter(Boolean).join("\n\n")}`);
+    .setDescription(`**${displayName}**\n\n${details.filter(Boolean).join("\n\n")}`));
 }
 
 function createStickyEmbed(rule) {
@@ -431,8 +438,8 @@ function createStickyEmbed(rule) {
     code: "Share an Honor of Kings event code or redemption screenshot.\n\n🚫 No general chat. Use only the allowed status or appreciation replies when replying to a code post.",
     fanart: "Share Honor of Kings fan art, drawings, illustrations, edits, and artwork.\n\n🚫 Do not reply to other members' posts. Unrelated content may be removed."
   };
-  return new EmbedBuilder().setColor(GOLD).setTitle("📌 LAMPOON STICKY")
-    .setDescription(`**${displayName}**\n\n${reminders[rule.type] || rule.description}`);
+  return applyLampoonFooter(new EmbedBuilder().setColor(GOLD).setTitle("📌 CHANNEL TOPICS")
+    .setDescription(`**${displayName}**\n\n${reminders[rule.type] || rule.description}`));
 }
 
 // ============================================================
@@ -447,7 +454,7 @@ function isPinnedMessage(message) {
 function isStickyBotMessage(message) {
   if (message?.author?.id !== client.user?.id) return false;
   const hasStickyEmbed = message.embeds?.some(embed =>
-    embed.title === "📌 LAMPOON STICKY" || embed.footer?.text === STICKY_MARKER
+    (embed.title === "📌 CHANNEL TOPICS" || embed.title === "📌 LAMPOON STICKY") || embed.footer?.text === STICKY_MARKER
   );
   if (hasStickyEmbed) return true;
   // Legacy plain-text stickies are recognized only so the bot can remove them.
@@ -489,8 +496,14 @@ async function fetchRecentMessages(channel, maxMessages = 200) {
 async function findExistingPinned(channel) {
   try {
     const found = new Map();
-    if (channel.messages.fetchPinned) {
-      const pinned = await channel.messages.fetchPinned();
+    // Prefer the current discord.js API; retain a fallback for older v14 releases.
+    let pinned = null;
+    if (typeof channel.messages.fetchPins === "function") {
+      pinned = await channel.messages.fetchPins();
+    } else if (typeof channel.messages.fetchPinned === "function") {
+      pinned = await channel.messages.fetchPinned();
+    }
+    if (pinned) {
       for (const message of pinned.values()) {
         if (isPinnedMessage(message)) found.set(message.id, message);
       }
@@ -809,7 +822,7 @@ async function sendModerationLog(embed) {
   if (!MOD_LOG_CHANNEL_ID) return;
   try {
     const channel = await client.channels.fetch(MOD_LOG_CHANNEL_ID);
-    if (channel?.isTextBased()) await channel.send({ embeds: [embed] });
+    if (channel?.isTextBased()) await channel.send({ embeds: [applyLampoonFooter(embed)] });
   } catch (e) { console.error("❌ Log failed:", e.message); }
 }
 
@@ -1080,7 +1093,7 @@ client.on("interactionCreate", async (interaction) => {
                          r.type === "build" ? " — HOK chat OK" : "";
         return `• ${PINNED_TITLES[r.type] || r.name}${modeNote} — <#${id}>`;
       }).join("\n");
-      return interaction.reply({ embeds: [new EmbedBuilder().setColor(GOLD).setTitle(`${AVISALA} CONFIGURED`).setDescription(list).setTimestamp()], ephemeral: true });
+      return interaction.reply({ embeds: [applyLampoonFooter(new EmbedBuilder().setColor(GOLD).setTitle(`${AVISALA} CONFIGURED`).setDescription(list).setTimestamp())], ephemeral: true });
     }
 
 
@@ -1104,7 +1117,6 @@ client.once("clientReady", async () => {
   console.log(`🧠 Gemini model: ${GEMINI_MODEL}`);
   console.log(`📷 Image moderation: ${genAI ? "✅ Enabled (up to 3 images/message)" : "⚠️ Not configured"}`);
   console.log(`🌍 Tagalog support: ✅ Enabled`);
-  console.log(`🧯 AI quota protection: suspicious-text prefilter, result cache, cooldown enabled`);
   console.log(`🧯 AI quota protection: suspicious-text prefilter, result cache, cooldown enabled`);
   console.log(`📌 Event Code Share directions are pinned; eligible text channels get one sticky; forums use a guide post only`);
   console.log(`🛡️ Historical cleanup is disabled; existing member messages are not scanned at startup`);

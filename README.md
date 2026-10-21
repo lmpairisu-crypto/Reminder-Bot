@@ -5,7 +5,7 @@ All bot logic is in the root `index.js`: configuration, channel rules, pinned em
 ## Deploy on Railway
 
 1. Upload the four root files in this ZIP to your repository/deployment.
-2. In Railway → Variables, set `DISCORD_TOKEN`, `CLIENT_ID`, and `GUILD_ID`. Set `GEMINI_API_KEY` for AI scanning. Optional: `GEMINI_MODEL`, `MOD_LOG_CHANNEL_ID`, and `LAMPOON_ICON_URL`.
+2. In Railway → Variables, set `DISCORD_TOKEN`, `CLIENT_ID`, and `GUILD_ID`. Set `GEMINI_API_KEY` for AI scanning. Optional: `GEMINI_MODEL` and `MOD_LOG_CHANNEL_ID`. The supplied LAMPOON icon URL is configured as the default for embed thumbnails and footer icons; set `LAMPOON_ICON_URL` only if you want to override it.
 3. Deploy using `npm start` (or `node index.js`).
 4. Run `npm run check` to syntax-check `index.js`.
 
