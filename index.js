@@ -516,37 +516,71 @@ function isPinnedMessage(message) {
 
 function isStickyBotMessage(message) {
   if (!message) return false;
-  const embeds = message.embeds || [];
-  const hasMarker = embeds.some(embed =>
-    (embed.footer?.text || "").includes(STICKY_MARKER) ||
-    (embed.description || "").includes(STICKY_MARKER)
-  ) || (message.content || "").includes(STICKY_MARKER);
-  if (hasMarker) return true;
 
-  // Pinned channel-rules embeds are not movable sticky reminders.
-  // Exclude them before legacy title matching so READ REMINDER rules pins
-  // are never mistaken for a second sticky.
+  const embeds = message.embeds || [];
+  const content = message.content || "";
+
+  // Never treat pinned channel-rule embeds as movable stickies.
   if (message.pinned) return false;
 
-  // Legacy reminders from earlier bot versions may not carry the invisible marker.
-  // Match only known reminder titles/content and allow cleanup after a bot-token change.
-  const knownTitles = /(?:READ\s*REMINDER\s*!?|CHANNEL\s*TOPICS|LAMPOON\s*STICKY|PROFILE\s*SHOWCASE|SKIN\s*SHOWCASE|HERO\s*HIGHLIGHTS?|HOK\s*MEMES?\s*SHARE|STANDPOST\s*MEME\s*SHARE|REDEMPTION\s*CODE\s*SHARE|HOK\s*FAN[- ]?ART|HOK\s*STRATEGY\s*FORUM)/i;
-  const legacyPhrases = [
-    "Post your profile showcase below", "Show off your skins",
-    "Share your best plays and highlights below", "Keep it funny, keep it HOK",
-    "Meme away — make someone smile", "Please reply ONLY with:",
-    "Share your amazing art", "Chat freely about Honor of Kings",
-    "Please reply only with:", "Keep discussion related to Honor of Kings",
-  ];
-  const isBotAuthored = Boolean(message.author?.bot || (client.user && message.author?.id === client.user.id));
-  const titleMatch = embeds.some(embed => knownTitles.test(embed.title || ""));
-  const description = embeds.map(embed => embed.description || "").join("\n");
-  const content = message.content || "";
-  const hasLegacySignature = legacyPhrases.some(phrase =>
-    `${content}\n${description}`.toLowerCase().includes(phrase.toLowerCase())
+  // Only identify messages sent by bots.
+  const isBotAuthored = Boolean(
+    message.author?.bot ||
+    (client.user && message.author?.id === client.user.id)
   );
-  return titleMatch && (isBotAuthored || description.includes("LAMPOON") || description.includes("CHANNEL RULES")) ||
-    (isBotAuthored && (content.startsWith("💡") || hasLegacySignature));
+
+  if (!isBotAuthored) return false;
+
+  // Detect the invisible marker in older sticky messages.
+  const hasMarker =
+    embeds.some(embed =>
+      (embed.footer?.text || "").includes(STICKY_MARKER) ||
+      (embed.description || "").includes(STICKY_MARKER)
+    ) ||
+    content.includes(STICKY_MARKER);
+
+  if (hasMarker) return true;
+
+  // Detect the current reminder embed title.
+  const hasReminderTitle = embeds.some(embed =>
+    /^(?:📢\s*)?READ\s*REMINDER\s*!?$/i.test(
+      String(embed.title || "").trim()
+    )
+  );
+
+  if (hasReminderTitle) return true;
+
+  // Detect older sticky formats.
+  const legacyTitles =
+    /(?:CHANNEL\s*TOPICS|LAMPOON\s*STICKY|PROFILE\s*SHOWCASE|SKIN\s*SHOWCASE|HERO\s*HIGHLIGHTS?|HOK\s*MEMES?\s*SHARE|STANDPOST\s*MEME\s*SHARE|REDEMPTION\s*CODE\s*SHARE|HOK\s*FAN[- ]?ART|HOK\s*STRATEGY\s*FORUM)/i;
+
+  const legacyPhrases = [
+    "Post your profile showcase below",
+    "Show off your skins",
+    "Share your best plays and highlights below",
+    "Keep it funny, keep it HOK",
+    "Meme away — make someone smile",
+    "Please reply ONLY with:",
+    "Share your amazing art",
+    "Chat freely about Honor of Kings",
+    "Please reply only with:",
+    "Keep discussion related to Honor of Kings",
+  ];
+
+  const embedText = embeds
+    .map(embed => `${embed.title || ""}\n${embed.description || ""}`)
+    .join("\n");
+
+  const hasLegacySignature = legacyPhrases.some(phrase =>
+    `${content}\n${embedText}`
+      .toLowerCase()
+      .includes(phrase.toLowerCase())
+  );
+
+  return (
+    legacyTitles.test(embedText) &&
+    /CHANNEL RULES|READ REMINDER|LAMPOON/i.test(embedText)
+  ) || hasLegacySignature;
 }
 
 async function fetchRecentMessages(channel, maxMessages = 200) {
