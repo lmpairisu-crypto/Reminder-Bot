@@ -482,8 +482,8 @@ function createStickyEmbed(rule) {
     .setDescription(`**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
   if (LAMPOON_ICON_URL) embed.setThumbnail(LAMPOON_ICON_URL);
   applyLampoonFooter(embed);
-  // Invisible identifier lets cleanup reliably find this embed even if its title changes.
-  const footer = { text: `LAMPOON • Moderation 🔨${STICKY_MARKER}` };
+  // Keep the public footer clean; sticky detection uses the bot-authored reminder title.
+  const footer = { text: "LAMPOON • Moderation 🔨" };
   if (LAMPOON_FOOTER_ICON_URL) footer.iconURL = LAMPOON_FOOTER_ICON_URL;
   return embed.setFooter(footer);
 }
