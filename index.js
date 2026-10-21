@@ -29,7 +29,7 @@ const MODERATION_TIMEOUT_MINUTES = 0;
 const REPEATED_VIOLATION_TIMEOUT_MINUTES = 0;
 const SERIOUS_VIOLATION_TIMEOUT_MINUTES = 60;
 const GOLD = "#D4AF37";
-const PINNED_MARKER = "📌 READ CHANNEL'S TOPIC !";
+const PINNED_MARKER = "📌 READ TOPIC !";
 const STICKY_MARKER = "\u2063LMP_REMINDER_STICKY\u2063";
 const AVISALA = "<a:Avisala:1542448826265243660>";
 
@@ -464,7 +464,7 @@ function createStickyEmbed(rule) {
 
   const embed = new EmbedBuilder()
     .setColor(GOLD)
-    .setTitle("📌 READ REMINDER !")
+    .setTitle("📢 READ REMINDER !")
     .setDescription(`${introductions[rule.type] || rule.description}\n\n**${AVISALA} CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
   // Every active sticky reminder uses the LAMPOON thumbnail independently of the footer icon.
   if (LAMPOON_ICON_URL) embed.setThumbnail(LAMPOON_ICON_URL);
@@ -483,7 +483,7 @@ function isPinnedMessage(message) {
 function isStickyBotMessage(message) {
   if (message?.author?.id !== client.user?.id) return false;
   const hasStickyEmbed = message.embeds?.some(embed =>
-    (embed.title === "📌 CHANNEL TOPICS" || embed.title === "📌 LAMPOON STICKY") || embed.footer?.text === STICKY_MARKER
+    (embed.title === "📌 CHANNEL TOPICS" || embed.title === "📌 LAMPOON STICKY" || embed.title === "📢 READ REMINDER !" || embed.title === "🎙️ READ REMINDER !" || embed.title === "📌 READ REMINDER !") || embed.footer?.text === STICKY_MARKER
   );
   if (hasStickyEmbed) return true;
   // Legacy plain-text stickies are recognized only so the bot can remove them.
@@ -533,7 +533,17 @@ async function findExistingPinned(channel) {
       pinned = await channel.messages.fetchPinned();
     }
     if (pinned) {
-      for (const message of pinned.values()) {
+      // discord.js versions/providers may return a Collection, array, or an object wrapper.
+      const pinMessages = Array.isArray(pinned)
+        ? pinned
+        : (typeof pinned.values === "function"
+            ? [...pinned.values()]
+            : Array.isArray(pinned.messages)
+              ? pinned.messages
+              : pinned.messages && typeof pinned.messages.values === "function"
+                ? [...pinned.messages.values()]
+                : []);
+      for (const message of pinMessages) {
         if (isPinnedMessage(message)) found.set(message.id, message);
       }
     }
@@ -617,7 +627,6 @@ async function ensureSticky(channel, rule, refresh = true) {
       return null;
     }
 
-    if (rule.type === "code") return null; // Event Code Share uses pinned directions only.
     const stickyEmbed = createStickyEmbed(rule);
     const newSticky = await channel.send({ embeds: [stickyEmbed] });
     stickyMessages.set(channel.id, newSticky);
@@ -1169,7 +1178,7 @@ client.once("clientReady", async () => {
   console.log(`📷 Image moderation: ${genAI ? "✅ Enabled (up to 3 images/message)" : "⚠️ Not configured"}`);
   console.log(`🌍 Tagalog support: ✅ Enabled`);
   console.log(`🧯 AI quota protection: suspicious-text prefilter, result cache, cooldown enabled`);
-  console.log(`📌 Event Code Share directions are pinned; eligible text channels get one sticky; forums use a guide post only`);
+  console.log(`📌 Event Code Share gets a pinned direction embed and one reminder sticky; forums use a guide post only`);
   console.log(`🛡️ Historical cleanup is disabled; existing member messages are not scanned at startup`);
   console.log(`🎭 LAMPOON Reminder Bot is online.`);
   console.log("========================================");
