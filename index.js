@@ -23,7 +23,8 @@ const GUILD_ID = process.env.GUILD_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || null;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || null;
-const LAMPOON_ICON_URL = process.env.LAMPOON_ICON_URL || "https://cdn.discordapp.com/attachments/1532817641490874491/1562134042248478750/Dofoto_20261021_000232084.png?ex=6ad98af2&is=6ad83972&hm=795eb8acb674ed9005ce69ff28781ebeb87aeaab98be3ab60217d4ae035cdcf8&";
+const LAMPOON_ICON_URL = process.env.LAMPOON_ICON_URL || null; // Embed thumbnail only; intentionally separate from footer icon.
+const LAMPOON_FOOTER_ICON_URL = process.env.LAMPOON_FOOTER_ICON_URL || "https://cdn.discordapp.com/attachments/1532817641490874491/1562134042248478750/Dofoto_20261021_000232084.png?ex=6ad98af2&is=6ad83972&hm=795eb8acb674ed9005ce69ff28781ebeb87aeaab98be3ab60217d4ae035cdcf8&";
 const MODERATION_TIMEOUT_MINUTES = 0;
 const REPEATED_VIOLATION_TIMEOUT_MINUTES = 0;
 const SERIOUS_VIOLATION_TIMEOUT_MINUTES = 60;
@@ -33,7 +34,7 @@ const STICKY_MARKER = "\u2063LMP_REMINDER_STICKY\u2063";
 const AVISALA = "<a:Avisala:1542448826265243660>";
 
 function applyLampoonFooter(embed) {
-  const iconURL = LAMPOON_ICON_URL || client.user?.displayAvatarURL({ extension: "png", size: 128 });
+  const iconURL = LAMPOON_FOOTER_ICON_URL;
   const footer = { text: "LAMPOON Moderation" };
   if (iconURL) footer.iconURL = iconURL;
   return embed.setFooter(footer);
@@ -420,26 +421,54 @@ function createPinnedEmbed(rule) {
     details = [rule.description, replyNote, channelNote];
   }
 
-  return applyLampoonFooter(new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(GOLD)
     .setTitle(PINNED_MARKER)
-    .setThumbnail(LAMPOON_ICON_URL || client.user?.displayAvatarURL({ extension: "png", size: 256 }) || null)
-    .setDescription(`**${displayName}**\n\n${details.filter(Boolean).join("\n\n")}`));
+    .setDescription(`**${displayName}**\n\n${details.filter(Boolean).join("\n\n")}`);
+  // Pinned instruction embeds use a thumbnail only in the HOK Strategy Forum.
+  if (rule.type === "build" && LAMPOON_ICON_URL) embed.setThumbnail(LAMPOON_ICON_URL);
+  return applyLampoonFooter(embed);
 }
 
 function createStickyEmbed(rule) {
-  const displayName = PINNED_TITLES[rule.type] || `${AVISALA} ${rule.name}`;
-  const reminders = {
-    profile: "Share your Honor of Kings profile showcase.\n\n🚫 No replies to other members' posts. Unrelated content may be removed.",
-    skin: "Share Honor of Kings skins, previews, collections, and skin-related screenshots.\n\n🚫 No replies to other members' posts. Unrelated content may be removed.",
-    hero: "Share your Honor of Kings hero highlight videos.\n\n🚫 No replies to other members' posts. Unrelated content may be removed.",
-    "hok-meme": "Share Honor of Kings memes, funny screenshots, edits, reactions, and parody content.\n\n🚫 Do not use this channel for general chatting. Unrelated content may be removed.",
-    "general-meme": "Share general memes, funny images, reactions, edits, and entertainment.\n\n🚫 Do not reply to other members' posts. Unrelated content may be removed.",
-    code: "Share an Honor of Kings event code or redemption screenshot.\n\n🚫 No general chat. Use only the allowed status or appreciation replies when replying to a code post.",
-    fanart: "Share Honor of Kings fan art, drawings, illustrations, edits, and artwork.\n\n🚫 Do not reply to other members' posts. Unrelated content may be removed."
+  const titles = {
+    profile: `${AVISALA} PROFILE SHOWCASE`,
+    skin: `${AVISALA} SKIN SHOWCASE`,
+    hero: `${AVISALA} HERO HIGHLIGHT`,
+    "hok-meme": `${AVISALA} HOK MEME SHARE`,
+    "general-meme": `${AVISALA} LAMPOON STANDPOST MEME`,
+    code: `${AVISALA} EVENT CODE SHARE`,
+    fanart: `${AVISALA} FAN ART`,
+    build: `${AVISALA} HOK STRATEGY FORUM`,
   };
-  return applyLampoonFooter(new EmbedBuilder().setColor(GOLD).setTitle("📌 CHANNEL TOPICS")
-    .setDescription(`**${displayName}**\n\n${reminders[rule.type] || rule.description}`));
+  const introductions = {
+    profile: "Share your Honor of Kings profile showcase and let the community see your in-game identity, achievements, and progress!",
+    skin: "Share your Honor of Kings skins, previews, collections, and skin-related screenshots!",
+    hero: "Share your Honor of Kings hero highlights and memorable gameplay moments!",
+    "hok-meme": "Share your Honor of Kings memes, funny screenshots, edits, reactions, and parody content!",
+    "general-meme": "Share memes, funny images, reactions, edits, and entertainment with the community!",
+    code: "Share Honor of Kings event codes, redemption screenshots, and helpful redemption information!",
+    fanart: "Share your Honor of Kings fan art, drawings, illustrations, and creative edits!",
+    build: "Share useful Honor of Kings questions, match analysis, builds, tips, and strategies!",
+  };
+  const channelRules = {
+    profile: "🚫 Do not reply to other members' showcase posts. Keep this channel dedicated to individual profile showcases. Unrelated content may be removed.",
+    skin: "🚫 Do not reply to other members' showcase posts. Keep this channel dedicated to skin showcases. Unrelated content may be removed.",
+    hero: "🚫 Do not reply to other members' highlight posts. Keep this channel dedicated to hero highlights. Unrelated content may be removed.",
+    "hok-meme": "🚫 Do not use this channel for general chatting. Keep posts related to Honor of Kings memes. Unrelated content may be removed.",
+    "general-meme": "🚫 Do not reply to other members' posts. Keep this channel dedicated to memes and entertainment. Unrelated content may be removed.",
+    code: "🚫 No general chat. Replies are limited to code status (done, used, invalid, expired, not work, error) and brief appreciation such as 'Thank you'. Unrelated content may be removed.",
+    fanart: "🚫 Do not reply to other members' artwork posts. Keep this channel dedicated to fan art and creative works. Unrelated content may be removed.",
+    build: "🚫 Keep posts and discussions related to Honor of Kings strategy. Unrelated content may be removed.",
+  };
+
+  const embed = new EmbedBuilder()
+    .setColor(GOLD)
+    .setTitle("📌 READ REMINDER !")
+    .setDescription(`${introductions[rule.type] || rule.description}\n\n**${AVISALA} CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
+  // Every active sticky reminder uses the LAMPOON thumbnail independently of the footer icon.
+  if (LAMPOON_ICON_URL) embed.setThumbnail(LAMPOON_ICON_URL);
+  return applyLampoonFooter(embed);
 }
 
 // ============================================================
@@ -588,6 +617,7 @@ async function ensureSticky(channel, rule, refresh = true) {
       return null;
     }
 
+    if (rule.type === "code") return null; // Event Code Share uses pinned directions only.
     const stickyEmbed = createStickyEmbed(rule);
     const newSticky = await channel.send({ embeds: [stickyEmbed] });
     stickyMessages.set(channel.id, newSticky);
@@ -868,12 +898,33 @@ async function registerViolation(message, reason, serious = false) {
   );
 }
 
+async function logRemovedMessage(message, reason, serious = false) {
+  if (!message?.guild) return;
+  const content = String(message.content || "[No text content — message may contain attachments or embeds]").slice(0, 3500);
+  const embed = new EmbedBuilder()
+    .setColor(serious ? "#FF4444" : "#D4AF37")
+    .setTitle("🗑️ MESSAGE REMOVED")
+    .setDescription("A message was removed by the Lampoon moderation system.")
+    .addFields(
+      { name: "👤 User", value: `${message.author?.tag || message.author?.username || "Unknown user"}\n\`${message.author?.id || "Unknown ID"}\``, inline: false },
+      { name: "📍 Channel", value: `${message.channel || "Unknown channel"}\n\`${message.channel?.id || "Unknown ID"}\``, inline: false },
+      { name: "📋 Reason", value: String(reason || "No reason provided").slice(0, 1024), inline: false },
+      { name: "💬 Message", value: content || "[Empty message]", inline: false },
+      { name: "🔗 Message ID", value: `\`${message.id || "Unknown ID"}\``, inline: false },
+      { name: "🚨 Serious", value: serious ? "Yes" : "No", inline: false }
+    )
+    .setTimestamp();
+  await sendModerationLog(embed);
+}
+
 async function deleteOnly(message, reason) {
+  await logRemovedMessage(message, reason, false);
   await message.delete().catch(e => console.error("❌ Delete failed:", e.message));
   console.log(`🗑️ Deleted in #${message.channel.name}: ${reason}`);
 }
 
 async function deleteAndModerate(message, reason, serious) {
+  await logRemovedMessage(message, reason, Boolean(serious));
   await message.delete().catch(e => console.error("❌ Delete failed:", e.message));
   await message.reactions.removeAll().catch(err => console.log('⚠️ Could not remove reactions:', err.message));
   await registerViolation(message, reason, serious);

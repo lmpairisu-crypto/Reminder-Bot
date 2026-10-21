@@ -25,3 +25,9 @@ See `.env.example`. Never commit real bot tokens or API keys. Keep secrets in Ra
 ## Required Discord permissions
 
 View Channels, Send Messages, Read Message History, Manage Messages, and Manage Threads where the forum guide is used. Pin Messages is needed to pin rules embeds. `Moderate Members` is required for timeouts.
+
+
+### Separate embed thumbnail and footer icon
+- `LAMPOON_ICON_URL` controls the embed thumbnail only. Leave it blank to omit the thumbnail.
+- `LAMPOON_FOOTER_ICON_URL` controls the footer icon only and defaults to the supplied footer image URL.
+- These settings are independent; the footer icon is never reused as the thumbnail.
