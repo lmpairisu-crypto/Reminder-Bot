@@ -487,15 +487,22 @@ function createStickyEmbed(rule) {
   };
 
   const embed = new EmbedBuilder()
-    .setColor(GOLD)
-    .setTitle("📢 READ REMINDER!")
-    .setDescription(`**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
-  if (LAMPOON_ICON_URL) embed.setThumbnail(LAMPOON_ICON_URL);
-  applyLampoonFooter(embed);
-  // Keep the public footer clean; sticky detection uses the bot-authored reminder title.
-  const footer = { text: "LAMPOON • Moderation 🔨" };
-  if (LAMPOON_FOOTER_ICON_URL) footer.iconURL = LAMPOON_FOOTER_ICON_URL;
-  return embed.setFooter(footer);
+  .setColor(GOLD)
+  .setTitle("📢 READ REMINDER!")
+  .setDescription(
+    `**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n` +
+    `${introductions[rule.type] || rule.description}\n\n` +
+    `**CHANNEL RULES**\n\n` +
+    `${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}\n\n` +
+    `${STICKY_MARKER}`
+  );
+
+const footer = { text: "LAMPOON • Moderation 🔨" };
+if (LAMPOON_FOOTER_ICON_URL) {
+  footer.iconURL = LAMPOON_FOOTER_ICON_URL;
+}
+
+return embed.setFooter(footer);
 }
 
 // ============================================================
