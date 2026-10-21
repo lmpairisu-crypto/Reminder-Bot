@@ -337,7 +337,11 @@ function containsPossibleCode(text) {
 // ============================================================
 
 const ALLOWED_CODE_REPLIES = ["done", "used", "invalid", "expired", "not work", "error"];
-const APPRECIATION_REPLIES = ["thank you", "thanks", "appreciate it", "i appreciate your help", "thank you so much", "thanks a lot"];
+const APPRECIATION_REPLIES = [
+  "thank you", "thanks", "appreciate it", "i appreciate it", "i appreciate your help",
+  "thank you so much", "thanks a lot", "thank you for appreciation", "thank you for the appreciation",
+  "thank you for your help", "thanks for your help", "much appreciated"
+];
 
 function normalizeShortReply(text) {
   return String(text || "").trim().toLowerCase().replace(/[.!?]+$/g, "").replace(/\s+/g, " ").trim();
@@ -346,7 +350,13 @@ function isAllowedCodeReply(text) {
   return ALLOWED_CODE_REPLIES.includes(normalizeShortReply(text));
 }
 function isAppreciationReply(text) {
-  return APPRECIATION_REPLIES.includes(normalizeShortReply(text));
+  const value = normalizeShortReply(text);
+  if (APPRECIATION_REPLIES.includes(value)) return true;
+  // Allow short, polite variations of the appreciation examples shown in the channel rules.
+  // Keep this limited to thank-you/appreciation wording to avoid permitting general chat.
+  if (value.length <= 80 && /^(thank you|thanks)(\s+(so much|very much|for (the )?(help|appreciation|sharing|the code|this)))?$/.test(value)) return true;
+  if (value.length <= 80 && /^(i )?appreciate( it| this| your (help|sharing|effort))$/.test(value)) return true;
+  return false;
 }
 
 // ============================================================
@@ -446,14 +456,14 @@ function createPinnedEmbed(rule) {
 
 function createStickyEmbed(rule) {
   const titles = {
-    profile: "PROFILE SHOWCASE",
-    skin: "SKIN SHOWCASE",
-    hero: "HERO HIGHLIGHTS",
-    "hok-meme": "HOK MEMES SHARE",
-    "general-meme": "STANDPOST MEME SHARE",
-    code: "REDEMPTION CODE SHARE",
-    fanart: "HOK FAN-ART SHARE",
-    build: "HOK STRATEGY FORUM",
+    profile: `${AVISALA} PROFILE SHOWCASE`,
+    skin: `${AVISALA} SKIN SHOWCASE`,
+    hero: `${AVISALA} HERO HIGHLIGHTS`,
+    "hok-meme": `${AVISALA} HOK MEMES SHARE`,
+    "general-meme": `${AVISALA} STANDPOST MEME SHARE`,
+    code: `${AVISALA} REDEMPTION CODE SHARE`,
+    fanart: `${AVISALA} HOK FAN-ART SHARE`,
+    build: `${AVISALA} HOK STRATEGY FORUM`,
   };
   const introductions = {
     profile: "Share your Honor of Kings profile showcase and let the community see your in-game identity, achievements, and progress!",
@@ -505,6 +515,11 @@ function isStickyBotMessage(message) {
     (embed.description || "").includes(STICKY_MARKER)
   ) || (message.content || "").includes(STICKY_MARKER);
   if (hasMarker) return true;
+
+  // Pinned channel-rules embeds are not movable sticky reminders.
+  // Exclude them before legacy title matching so READ REMINDER rules pins
+  // are never mistaken for a second sticky.
+  if (message.pinned) return false;
 
   // Legacy reminders from earlier bot versions may not carry the invisible marker.
   // Match only known reminder titles/content and allow cleanup after a bot-token change.
