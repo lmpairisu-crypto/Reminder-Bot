@@ -497,13 +497,7 @@ function createStickyEmbed(rule) {
     `${STICKY_MARKER}`
   );
 
-const footer = { text: "LAMPOON • Moderation 🔨" };
-if (LAMPOON_FOOTER_ICON_URL) {
-  footer.iconURL = LAMPOON_FOOTER_ICON_URL;
-}
-
-return embed.setFooter(footer);
-}
+// KEEP your original thumbnail setting here.
 
 // ============================================================
 // DETECT MESSAGES
