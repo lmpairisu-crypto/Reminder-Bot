@@ -30,6 +30,7 @@ const LAMPOON_FOOTER_ICON_URL = process.env.LAMPOON_FOOTER_ICON_URL || "https://
 const MODERATION_TIMEOUT_MINUTES = 0;
 const REPEATED_VIOLATION_TIMEOUT_MINUTES = 0;
 const SERIOUS_VIOLATION_TIMEOUT_MINUTES = 60;
+const SPAM_TIMEOUT_MINUTES = 1;
 const GOLD = "#D4AF37";
 const PINNED_MARKER = "📌 READ TOPIC !";
 const STICKY_MARKER = "\u2063LMP_REMINDER_STICKY\u2063";
@@ -475,21 +476,12 @@ function createStickyEmbed(rule) {
     build: "🚫 Keep posts and discussions related to Honor of Kings strategy. Unrelated content may be removed.",
   };
 
-  
   const embed = new EmbedBuilder()
     .setColor(GOLD)
-    .setTitle("📢 READ REMINDER!")
-    .setDescription(
-      `**${titles[rule.type] || `${AVISALA} ${rule.name || "CHANNEL REMINDER"}`}**\n\n` +
-      `${introductions[rule.type] || rule.description}\n\n` +
-      `**CHANNEL RULES**\n\n` +
-      `${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`
-    );
-
-  if (LAMPOON_ICON_URL) {
-    embed.setThumbnail(LAMPOON_ICON_URL);
-  }
-
+    .setTitle(titles[rule.type] || `${AVISALA} ${rule.name || "CHANNEL REMINDER"}`)
+    .setDescription(`${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
+  // Every active sticky reminder uses the LAMPOON thumbnail independently of the footer icon.
+  if (LAMPOON_ICON_URL) embed.setThumbnail(LAMPOON_ICON_URL);
   return applyLampoonFooter(embed);
 }
 
@@ -625,13 +617,16 @@ async function ensureSticky(channel, rule, refresh = true) {
   if (stickyDisabledChannels.has(channel.id)) return null;
   if (stickyLocks.get(channel.id)) return stickyMessages.get(channel.id) || null;
   const now = Date.now();
-  if (refresh && now - (stickyLastRefreshAt.get(channel.id) || 0) < STICKY_REFRESH_COOLDOWN_MS) {
-    return stickyMessages.get(channel.id) || null;
-  }
   stickyLocks.set(channel.id, true);
 
   try {
     const oldStickies = await findExistingStickies(channel);
+    const inCooldown = refresh && now - (stickyLastRefreshAt.get(channel.id) || 0) < STICKY_REFRESH_COOLDOWN_MS;
+    // During cooldown, keep a single existing sticky, but still clean duplicates left by older versions.
+    if (inCooldown && oldStickies.length <= 1) {
+      if (oldStickies.length === 1) stickyMessages.set(channel.id, oldStickies[0]);
+      return oldStickies[0] || stickyMessages.get(channel.id) || null;
+    }
     if (!refresh && oldStickies.length === 1) {
       stickyMessages.set(channel.id, oldStickies[0]);
       return oldStickies[0];
@@ -949,7 +944,7 @@ async function timeoutMember(member, minutes, reason) {
   } catch (e) { console.error("❌ Timeout failed:", e.message); return false; }
 }
 
-async function registerViolation(message, reason, serious = false) {
+async function registerViolation(message, reason, serious = false, isSpam = false) {
   if (!message.guild) return;
   
   // Only count/action for SERIOUS violations
@@ -964,9 +959,16 @@ async function registerViolation(message, reason, serious = false) {
 
   let action = "Removed.";
   const member = await message.guild.members.fetch(message.author.id).catch(() => null);
-  if (member && SERIOUS_VIOLATION_TIMEOUT_MINUTES > 0) {
-    const didTimeout = await timeoutMember(member, SERIOUS_VIOLATION_TIMEOUT_MINUTES, reason);
-    if (didTimeout) action = `Timed out ${SERIOUS_VIOLATION_TIMEOUT_MINUTES} min.`;
+  const channelRule = CHANNEL_RULES[message.channel.id] || CHANNEL_RULES[message.channel.parentId];
+  const isTimeoutExemptChannel = channelRule?.type === "code" || channelRule?.type === "build";
+  const timeoutMinutes = isSpam
+    ? (isTimeoutExemptChannel ? 0 : SPAM_TIMEOUT_MINUTES)
+    : SERIOUS_VIOLATION_TIMEOUT_MINUTES;
+  if (isSpam && isTimeoutExemptChannel) {
+    action = "Timeout skipped (Code Share/Forum exemption).";
+  } else if (member && timeoutMinutes > 0) {
+    const didTimeout = await timeoutMember(member, timeoutMinutes, reason);
+    if (didTimeout) action = `Timed out ${timeoutMinutes} min.`;
   }
 
   await sendModerationLog(
@@ -1089,7 +1091,7 @@ client.on("messageCreate", async (message) => {
       await message.delete().catch(e => console.error("❌ Spam message delete failed:", e.message));
       if (!spam.alreadyReported) {
         await logRemovedMessage(message, spam.reason, true);
-        await registerViolation(message, spam.reason, true);
+        await registerViolation(message, spam.reason, true, true);
       } else {
         console.log(`🧹 Removed follow-up spam from ${message.author.tag} in #${channel.name} (already reported this burst).`);
       }
@@ -1295,7 +1297,7 @@ client.once("clientReady", async () => {
   console.log("========================================");
   console.log(`🤖 Logged in as ${client.user.tag}`);
   console.log(`🏠 Connected to ${client.guilds.cache.size} guild(s)`);
-  console.log(`⏱️ Thresholds: Moderate=${MODERATION_TIMEOUT_MINUTES}m | Repeated=${REPEATED_VIOLATION_TIMEOUT_MINUTES}m | Serious=${SERIOUS_VIOLATION_TIMEOUT_MINUTES}m`);
+  console.log(`⏱️ Thresholds: Spam=${SPAM_TIMEOUT_MINUTES}m (Code Share/Forum exempt) | Moderate=${MODERATION_TIMEOUT_MINUTES}m | Repeated=${REPEATED_VIOLATION_TIMEOUT_MINUTES}m | Serious=${SERIOUS_VIOLATION_TIMEOUT_MINUTES}m`);
   console.log(`🧠 Gemini model: ${GEMINI_MODEL}`);
   console.log(`📷 Image moderation: ${genAI ? "✅ Enabled (up to 3 images/message)" : "⚠️ Not configured"}`);
   console.log(`🌍 Tagalog support: ✅ Enabled`);
