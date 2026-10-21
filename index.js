@@ -12,6 +12,7 @@ const {
   Routes,
   PermissionFlagsBits,
   ChannelType,
+  MessageFlags,
 } = require("discord.js");
 
 // ============================================================
@@ -35,14 +36,14 @@ const AVISALA = "<a:Avisala:1542448826265243660>";
 
 function applyLampoonFooter(embed) {
   const iconURL = LAMPOON_FOOTER_ICON_URL;
-  const footer = { text: "LAMPOON • Moderation 🔨" };
+  const footer = { text: "LAMPOON Moderation" };
   if (iconURL) footer.iconURL = iconURL;
   return embed.setFooter(footer);
 }
 
 const IMAGE_PROMPTS = {
     profile: `Check whether this image is an Honor of Kings profile/account showcase. Do not infer violations from uncertain images. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
-    skin: `Check whether this image shows an Honor of Kings skin/preview. Do not infer violations from uncertain images. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
+    skin: `This is a strict Honor of Kings SKIN SHOWCASE channel. Accept only images that visibly show an Honor of Kings skin, skin preview, in-game hero appearance using a skin, skin collection, or an unmistakable HOK skin screen. Reject clearly unrelated images, including unrelated games, selfies, reaction images, emojis/stickers, food, scenery, unrelated memes, and screenshots unrelated to HOK. Do not approve an image merely because it is a game screenshot; the image must clearly relate to an HOK skin. Use "unknown" only if the image genuinely cannot be assessed (for example, corrupted/unreadable image). Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
     "hok-meme": `Check whether this image is an Honor of Kings-related meme. Do not infer violations from uncertain images. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
     "general-meme": `General memes are allowed, including non-HOK memes. Only flag clearly serious prohibited content such as explicit sexual content, credible threats, targeted severe harassment, or obvious scams. Do not guess from ambiguity. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":true|false,"reason":"short explanation"}`,
     fanart: `Check whether this image is Honor of Kings-related fan art. Do not infer violations from uncertain images. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
@@ -276,6 +277,17 @@ const stickyMessages = new Map();
 const violationCounts = new Map();
 const stickyLocks = new Map();
 const stickyDisabledChannels = new Set();
+const stickyLastRefreshAt = new Map();
+const warningLastSentAt = new Map();
+const recentUserMessages = new Map();
+const activeSpamPenaltyUntil = new Map();
+
+// Anti-spam controls: 5 messages in 10 seconds is a serious violation.
+const SPAM_WINDOW_MS = 10_000;
+const SPAM_MESSAGE_THRESHOLD = 5;
+const SPAM_PENALTY_COOLDOWN_MS = 60_000;
+const WARNING_COOLDOWN_MS = 30_000;
+const STICKY_REFRESH_COOLDOWN_MS = 3_000;
 
 // ============================================================
 // MEDIA HELPERS
@@ -462,10 +474,22 @@ function createStickyEmbed(rule) {
     build: "🚫 Keep posts and discussions related to Honor of Kings strategy. Unrelated content may be removed.",
   };
 
+  const sectionTitles = {
+    profile: "PROFILE SHOWCASE",
+    skin: "SKIN SHOWCASE",
+    hero: "HERO HIGHLIGHT",
+    "hok-meme": "HOK MEME SHARE",
+    "general-meme": "LAMPOON STANDPOST MEME",
+    code: "EVENT CODE SHARE",
+    fanart: "FAN ART",
+    build: "HOK STRATEGY FORUM",
+  };
+
+  const sectionTitle = sectionTitles[rule.type] || rule.name || "CHANNEL REMINDER";
   const embed = new EmbedBuilder()
     .setColor(GOLD)
     .setTitle("📢 READ REMINDER !")
-    .setDescription(`${introductions[rule.type] || rule.description}\n\n**${AVISALA} CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
+    .setDescription(`**${AVISALA} ${sectionTitle}**\n\n${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
   // Every active sticky reminder uses the LAMPOON thumbnail independently of the footer icon.
   if (LAMPOON_ICON_URL) embed.setThumbnail(LAMPOON_ICON_URL);
   return applyLampoonFooter(embed);
@@ -598,43 +622,22 @@ async function ensurePinned(channel, rule) {
   return keep;
 }
 
-async function ensureSticky(channel, rule, refresh = false) {
+async function ensureSticky(channel, rule, refresh = true) {
   if (!channel?.isTextBased() || channel.type === ChannelType.GuildForum || rule.type === "build") return null;
   if (stickyDisabledChannels.has(channel.id)) return null;
   if (stickyLocks.get(channel.id)) return stickyMessages.get(channel.id) || null;
+  const now = Date.now();
+  if (refresh && now - (stickyLastRefreshAt.get(channel.id) || 0) < STICKY_REFRESH_COOLDOWN_MS) {
+    return stickyMessages.get(channel.id) || null;
+  }
   stickyLocks.set(channel.id, true);
 
   try {
     const oldStickies = await findExistingStickies(channel);
-    const stickyEmbed = createStickyEmbed(rule);
-
-    // Startup/normal checks preserve and EDIT an existing reminder in place.
-    // Redeploys therefore don't repost the reminder or create duplicates.
-    if (!refresh && oldStickies.length > 0) {
-      const keep = [...oldStickies].sort((a, b) => b.createdTimestamp - a.createdTimestamp)[0];
-      let duplicateDeleteFailed = false;
-      for (const duplicate of oldStickies) {
-        if (duplicate.id === keep.id) continue;
-        try {
-          await duplicate.delete();
-          console.log(`🧹 Removed duplicate sticky in #${channel.name}`);
-        } catch (error) {
-          duplicateDeleteFailed = true;
-          console.error(`❌ Could not remove duplicate sticky in #${channel.name}:`, error.message);
-        }
-      }
-      if (duplicateDeleteFailed) console.warn(`⚠️ Duplicate cleanup was incomplete in #${channel.name}.`);
-      const current = keep.embeds?.[0];
-      if (current?.title !== stickyEmbed.data.title || current?.description !== stickyEmbed.data.description || current?.thumbnail?.url !== stickyEmbed.data.thumbnail?.url || current?.footer?.text !== stickyEmbed.data.footer?.text) {
-        await keep.edit({ embeds: [stickyEmbed] });
-        console.log(`📝 Updated existing sticky in #${channel.name} without reposting`);
-      }
-      stickyMessages.set(channel.id, keep);
-      return keep;
+    if (!refresh && oldStickies.length === 1) {
+      stickyMessages.set(channel.id, oldStickies[0]);
+      return oldStickies[0];
     }
-
-    // Discord cannot reposition an existing message by editing it. Only this
-    // explicit refresh path replaces it so the single reminder returns to bottom.
     let deleteFailed = false;
     for (const oldSticky of oldStickies) {
       try {
@@ -645,13 +648,17 @@ async function ensureSticky(channel, rule, refresh = false) {
         console.error(`❌ Could not remove old sticky in #${channel.name}:`, error.message);
       }
     }
+
+    // Never send a replacement if a previous sticky could not be deleted.
     if (deleteFailed) {
-      console.warn(`⚠️ Sticky refresh skipped in #${channel.name} to prevent duplicates.`);
+      console.warn(`⚠️ Sticky creation skipped in #${channel.name} to prevent duplicates.`);
       return null;
     }
 
+    const stickyEmbed = createStickyEmbed(rule);
     const newSticky = await channel.send({ embeds: [stickyEmbed] });
     stickyMessages.set(channel.id, newSticky);
+    stickyLastRefreshAt.set(channel.id, Date.now());
     console.log(`💡 Single sticky refreshed in #${channel.name}`);
     return newSticky;
   } catch (error) {
@@ -699,7 +706,7 @@ async function askGeminiImage(imageUrl, channelType) {
     noteGeminiError(error);
     console.error("❌ Gemini image check failed:", error.message);
     await sendModerationLog(new EmbedBuilder().setColor("#FF9900").setTitle("⚠️ AI SCANNER FAILURE")
-      .setDescription(`**Scanner:** Image scan\n**Channel:** ${message?.channel || "Unknown"}\n**Error:** ${String(error.message || error).slice(0, 900)}\n**Action:** Inconclusive result; media is not deleted based on scanner failure.`).setTimestamp());
+      .setDescription(`**Scanner:** Image scan\n**Channel type:** ${channelType || "Unknown"}\n**Error:** ${String(error.message || error).slice(0, 900)}\n**Action:** Inconclusive result; media is not deleted based on scanner failure.`).setTimestamp());
     return unavailable;
   }
 }
@@ -787,7 +794,7 @@ async function validateMessage(message, rule) {
 
   // Block replies where not allowed
   if (message.reference && !rule.allowReplies) {
-    return { allowed: false, serious: false, reason: "Replying to another member's post is not allowed in this channel." };
+    return { allowed: false, serious: false, reason: "Replies are not allowed in this channel." };
   }
 
   const hasMedia = images.length > 0 || videos.length > 0;
@@ -834,7 +841,7 @@ async function validateMessage(message, rule) {
   }
 
   if (rule.type === "skin") {
-    if (!images.length && !videos.length) return { allowed: false, serious: false, reason: "Skin image/video required." };
+    if (!images.length && !videos.length) return { allowed: false, serious: false, reason: "Skin image/video required. Emoji-only or text-only messages are not accepted in this channel." };
     if (images.length) {
       const scan = await scanMessageImages(images, "skin");
       if (scan.serious) return { allowed: false, serious: true, reason: scan.reason };
@@ -948,27 +955,51 @@ async function logRemovedMessage(message, reason, serious = false) {
   await sendModerationLog(embed);
 }
 
-async function sendPrivateRemovalNotice(message, reason) {
-  if (!message?.author || message.author.bot) return;
-  const channelName = message.channel?.name ? `#${message.channel.name}` : "that channel";
-  const notice = `Your message in ${channelName} was removed by the LAMPOON moderation system.\n**Reason:** ${String(reason || "No reason provided").slice(0, 900)}\n\nPlease review the channel rules before posting again.`;
-  try {
-    await message.author.send({ content: notice });
-  } catch (error) {
-    console.warn(`⚠️ Could not DM removal notice to ${message.author.tag || message.author.id}: ${error.message}`);
-  }
-}
-
 async function deleteOnly(message, reason) {
   await logRemovedMessage(message, reason, false);
-  await sendPrivateRemovalNotice(message, reason);
   await message.delete().catch(e => console.error("❌ Delete failed:", e.message));
+
+  // Normal messageCreate events cannot produce true ephemeral replies. Never DM;
+  // send at most one short-lived channel warning per user/channel cooldown.
+  const warningKey = `${message.guild.id}:${message.channel.id}:${message.author.id}`;
+  const now = Date.now();
+  if (now - (warningLastSentAt.get(warningKey) || 0) >= WARNING_COOLDOWN_MS) {
+    warningLastSentAt.set(warningKey, now);
+    try {
+      const warning = await message.channel.send({
+        content: `${message.author} — your post was removed. **Reason:** ${reason}\nPlease review this channel's rules before posting again.`,
+        allowedMentions: { users: [message.author.id] },
+      });
+      setTimeout(() => warning.delete().catch(() => {}), 8000);
+    } catch (e) {
+      console.warn("⚠️ Could not post temporary channel warning:", e.message);
+    }
+  }
+
   console.log(`🗑️ Deleted in #${message.channel.name}: ${reason}`);
+}
+
+function detectSpam(message) {
+  const now = Date.now();
+  const key = `${message.guild.id}:${message.channel.id}:${message.author.id}`;
+  const penaltyUntil = activeSpamPenaltyUntil.get(key) || 0;
+  if (now < penaltyUntil) {
+    return { spam: true, alreadyReported: true, reason: "Repeated message spam after a serious-violation warning." };
+  }
+
+  const recent = (recentUserMessages.get(key) || []).filter(timestamp => now - timestamp <= SPAM_WINDOW_MS);
+  recent.push(now);
+  recentUserMessages.set(key, recent);
+  if (recent.length >= SPAM_MESSAGE_THRESHOLD) {
+    activeSpamPenaltyUntil.set(key, now + SPAM_PENALTY_COOLDOWN_MS);
+    recentUserMessages.set(key, []);
+    return { spam: true, alreadyReported: false, reason: `Message spam: ${SPAM_MESSAGE_THRESHOLD} messages within ${SPAM_WINDOW_MS / 1000} seconds.` };
+  }
+  return { spam: false };
 }
 
 async function deleteAndModerate(message, reason, serious) {
   await logRemovedMessage(message, reason, Boolean(serious));
-  await sendPrivateRemovalNotice(message, reason);
   await message.delete().catch(e => console.error("❌ Delete failed:", e.message));
   await message.reactions.removeAll().catch(err => console.log('⚠️ Could not remove reactions:', err.message));
   await registerViolation(message, reason, serious);
@@ -993,7 +1024,7 @@ async function processMessage(message, rule) {
 
 async function refreshStickyAfterMessage(channel, rule) {
   await sleep(250);
-  await ensureSticky(channel, rule, true);
+  await ensureSticky(channel, rule);
 }
 
 // ============================================================
@@ -1009,8 +1040,21 @@ client.on("messageCreate", async (message) => {
     const rule = directRule || parentRule;
     if (!rule) return;
 
-    // Ensure one reminder exists before checking a new submission. Rejected
-    // submissions are deleted without triggering a second sticky refresh.
+    // Repeated rapid messages are treated as a serious violation, not as ordinary mistakes.
+    const spam = detectSpam(message);
+    if (spam.spam) {
+      await message.delete().catch(e => console.error("❌ Spam message delete failed:", e.message));
+      if (!spam.alreadyReported) {
+        await logRemovedMessage(message, spam.reason, true);
+        await registerViolation(message, spam.reason, true);
+      } else {
+        console.log(`🧹 Removed follow-up spam from ${message.author.tag} in #${channel.name} (already reported this burst).`);
+      }
+      // Do not refresh/repost the sticky for deleted spam messages.
+      return;
+    }
+
+    // Ensure one reminder exists before checking a new submission, then scan/moderate it.
     await ensureSticky(channel, rule, false);
     const processed = await processMessage(message, rule);
 
@@ -1023,6 +1067,7 @@ client.on("messageCreate", async (message) => {
     }
 
     if (channel.isThread?.() && parentRule?.type === "build") return;
+    // Deleted/rejected posts do not need to move the sticky. Only accepted posts refresh it.
     if (processed.action === "allowed") await refreshStickyAfterMessage(channel, rule);
   } catch (e) { console.error("❌ messageCreate error:", e); }
 });
@@ -1140,23 +1185,23 @@ client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
   try {
     if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages)) {
-      return interaction.reply({ content: "❌ Need Manage Messages permission.", ephemeral: true });
+      return interaction.reply({ content: "❌ Need Manage Messages permission.", flags: MessageFlags.Ephemeral });
     }
 
     const rule = CHANNEL_RULES[interaction.channelId];
 
     if (interaction.commandName === "sticky-refresh") {
-      if (!rule) return interaction.reply({ content: "❌ No rule for this channel.", ephemeral: true });
-      if (interaction.channel.type === ChannelType.GuildForum || rule.type === "build") return interaction.reply({ content: "ℹ️ Forum channels use a dedicated guide post and do not have sticky reminders.", ephemeral: true });
-      await interaction.deferReply({ ephemeral: true });
+      if (!rule) return interaction.reply({ content: "❌ No rule for this channel.", flags: MessageFlags.Ephemeral });
+      if (interaction.channel.type === ChannelType.GuildForum || rule.type === "build") return interaction.reply({ content: "ℹ️ Forum channels use a dedicated guide post and do not have sticky reminders.", flags: MessageFlags.Ephemeral });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       stickyDisabledChannels.delete(interaction.channelId);
-      await ensureSticky(interaction.channel, rule, true);
+      await ensureSticky(interaction.channel, rule);
       return interaction.editReply("✅ Sticky refreshed.");
     }
 
     if (interaction.commandName === "sticky-setup") {
-      if (!rule) return interaction.reply({ content: "❌ No rule for this channel.", ephemeral: true });
-      await interaction.deferReply({ ephemeral: true });
+      if (!rule) return interaction.reply({ content: "❌ No rule for this channel.", flags: MessageFlags.Ephemeral });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       if (interaction.channel.type === ChannelType.GuildForum) {
         await initializeForumChannel(interaction.channel, rule);
       } else {
@@ -1168,7 +1213,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (interaction.commandName === "sticky-cleanup") {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const oldStickies = await findExistingStickies(interaction.channel);
       let removed = 0;
       for (const old of oldStickies) {
@@ -1188,7 +1233,7 @@ client.on("interactionCreate", async (interaction) => {
                          r.type === "build" ? " — HOK chat OK" : "";
         return `• ${PINNED_TITLES[r.type] || r.name}${modeNote} — <#${id}>`;
       }).join("\n");
-      return interaction.reply({ embeds: [applyLampoonFooter(new EmbedBuilder().setColor(GOLD).setTitle(`${AVISALA} CONFIGURED`).setDescription(list).setTimestamp())], ephemeral: true });
+      return interaction.reply({ embeds: [applyLampoonFooter(new EmbedBuilder().setColor(GOLD).setTitle(`${AVISALA} CONFIGURED`).setDescription(list).setTimestamp())], flags: MessageFlags.Ephemeral });
     }
 
 
@@ -1196,7 +1241,7 @@ client.on("interactionCreate", async (interaction) => {
     console.error("❌ Interaction error:", e);
     const msg = "❌ Something went wrong.";
     if (interaction.deferred || interaction.replied) await interaction.editReply(msg).catch(() => {});
-    else await interaction.reply({ content: msg, ephemeral: true }).catch(() => {});
+    else await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral }).catch(() => {});
   }
 });
 

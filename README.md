@@ -5,18 +5,18 @@ All bot logic is in the root `index.js`: configuration, channel rules, pinned em
 ## Deploy on Railway
 
 1. Upload the four root files in this ZIP to your repository/deployment.
-2. In Railway → Variables, set `DISCORD_TOKEN`, `CLIENT_ID`, and `GUILD_ID`. Set `GEMINI_API_KEY` for AI scanning. Optional: `GEMINI_MODEL` and `MOD_LOG_CHANNEL_ID`. The thumbnail (`LAMPOON_ICON_URL`) and footer icon (`LAMPOON_FOOTER_ICON_URL`) are independent. The footer label is `LAMPOON • Moderation 🔨`.
+2. In Railway → Variables, set `DISCORD_TOKEN`, `CLIENT_ID`, and `GUILD_ID`. Set `GEMINI_API_KEY` for AI scanning. Optional: `GEMINI_MODEL` and `MOD_LOG_CHANNEL_ID`. The supplied LAMPOON icon URL is configured as the default for embed thumbnails and footer icons; set `LAMPOON_ICON_URL` only if you want to override it.
 3. Deploy using `npm start` (or `node index.js`).
 4. Run `npm run check` to syntax-check `index.js`.
 
 ## Moderation behavior
 
-- Ordinary format/off-topic mistakes are deleted without a timeout. The removal reason is included in the removal log and a private DM notice; the bot logs to console if DMs are closed.
+- Ordinary format/off-topic mistakes are deleted immediately without a timeout; ordinary removals are console-only.
 - Confirmed serious violations are deleted, logged to the moderation channel (when configured) and console, and may trigger a 60-minute timeout if the bot has `Moderate Members` permission and role hierarchy allows it.
-- Replies are disabled in profile, skin, hero, fan-art, HOK meme, and Standpost meme channels. The same reply-removal reason is used in the removal log and the private DM notice. Event Code Share allows only the six status replies or listed appreciation replies when replying to a code post. The bot acknowledges status replies with “Thank you! Your response has been noted.” and appreciation replies with “You're welcome! Happy to help!” HOK Strategy Forum allows HOK-related discussion.
+- Replies are disabled in profile, skin, hero, fan-art, HOK meme, and Standpost meme channels. Event Code Share allows only the six status replies or listed appreciation replies when replying to a code post. The bot acknowledges status replies with “Thank you! Your response has been noted.” and appreciation replies with “You're welcome! Happy to help!” HOK Strategy Forum allows HOK-related discussion.
 - The Gemini scanner uses conservative prompts, a short-lived result cache, a quota cooldown, up to three images per message, and a maximum image size of 6 MB. Scanner failures or inconclusive image results do not by themselves prove a violation.
 - Only new messages are moderated; the bot does not scan or delete historical messages on startup.
-- Sticky reminders are embed-only. On startup, the bot edits an existing reminder in place and removes recognized duplicates instead of reposting it. After an allowed new post, it replaces the reminder once to return it to the bottom (Discord cannot reposition a message by editing). Event Code Share has separate pinned directions and a sticky reminder. HOK Strategy Forum uses a dedicated guide post only and never gets a sticky. `/sticky-cleanup` removes all recognized sticky reminders in the current channel without recreating one. Pinned directions are limited to Event Code Share and the Strategy Forum guide post.
+- Sticky reminders are embed-only. Eligible text channels get one embed-only sticky reminder without a visible footer or divider lines. Event Code Share has separate pinned directions and a sticky reminder. HOK Strategy Forum uses a dedicated guide post only and never gets a sticky. `/sticky-cleanup` removes all recognized sticky reminders in the current channel without recreating one. Pinned directions are limited to Event Code Share and the Strategy Forum guide post.
 
 ## Environment variables
 
