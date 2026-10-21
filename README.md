@@ -1,51 +1,27 @@
-# LAMPOON Reminder Bot — safer simplified build
+# LAMPOON Reminder Bot — Consolidated Single-File Build
 
-This version keeps the bot logic in `index.js` and removes unused prompt/config/source-module files.
+All bot logic is in the root `index.js`: configuration, channel rules, pinned embeds, embed-only sticky reminders, Gemini image/text scanner prompts, validation, moderation, and slash commands. There are no `config/`, `rules/`, `pinned/`, `prompts/`, or `src/ai/` folders.
 
 ## Deploy on Railway
 
-1. Keep your current Railway service stopped until you are ready to replace its files.
-2. Upload these files to the connected GitHub repository or use the same source deployment method you already use:
-   - `index.js`
-   - `package.json`
-   - `.env.example` (template only; do not add real secrets)
-   - `README.md`
-3. Set the environment variables in Railway under the service's Variables section. Use your existing `DISCORD_TOKEN`, `CLIENT_ID`, and `GUILD_ID`; do not put real tokens in GitHub.
-4. Deploy with the start command `npm start`.
+1. Upload the four root files in this ZIP to your repository/deployment.
+2. In Railway → Variables, set `DISCORD_TOKEN`, `CLIENT_ID`, and `GUILD_ID`. Set `GEMINI_API_KEY` for AI scanning. Optional: `GEMINI_MODEL`, `MOD_LOG_CHANNEL_ID`, and `LAMPOON_ICON_URL`.
+3. Deploy using `npm start` (or `node index.js`).
+4. Run `npm run check` to syntax-check `index.js`.
 
-## Safety changes
+## Moderation behavior
 
-- Startup no longer scans or deletes historical member messages.
-- The `/cleanup` command has been removed.
-- Captions on image/video messages are not sent through the text-only serious-content scanner, preventing caption false positives from deleting attached media.
-- Ordinary text no longer triggers a Gemini request by default. A conservative suspicious-text prefilter sends likely-risky text to Gemini; this saves quota but can miss violations that do not match its hints.
-- Repeated identical text/image results are cached briefly to reduce duplicate Gemini requests.
-- Gemini quota/rate-limit errors activate a cooldown so the bot does not repeatedly hammer an exhausted free-tier quota.
-- Up to three images per message are scanned to control quota use. Additional images in the same message are not AI-scanned in that pass.
-- An inconclusive or unavailable image scan does not automatically delete media because of the AI result. Explicit AI rejection still follows the channel rule; normal channel-format rules still apply.
-- Sticky messages have a stable hidden marker, old reminder variants are recognized, all recognized duplicates are removed before a replacement is sent, and a new sticky is not sent if deletion fails.
-- The rules embed is pinned when Discord permissions allow it.
-- Event Code Share channels have the rules embed plus one bottom sticky reminder.
-- The HOK Strategy Forum uses channel ID `1562026949646221332`. If it is a real Discord Forum channel, the bot creates/finds a dedicated `HOK Strategy Forum — Rules & Guide` post and puts the pinned rules and sticky inside that post. Discord does not support one global bottom sticky across every separate Forum post.
-- The bot only moderates new messages after startup.
+- Ordinary format/off-topic mistakes are deleted immediately without a timeout; ordinary removals are console-only.
+- Confirmed serious violations are deleted, logged to the moderation channel (when configured) and console, and may trigger a 60-minute timeout if the bot has `Moderate Members` permission and role hierarchy allows it.
+- Replying is disabled in profile, skin, hero, and fan-art showcase channels. Replies are enabled in HOK meme, general meme, event-code, and HOK Strategy Forum channels. Event-code channels still validate reply text against allowed status replies.
+- The Gemini scanner uses conservative prompts, a short-lived result cache, a quota cooldown, up to three images per message, and a maximum image size of 6 MB. Scanner failures or inconclusive image results do not by themselves prove a violation.
+- Only new messages are moderated; the bot does not scan or delete historical messages on startup.
+- Sticky reminders are embed-only. The bot keeps one recognized sticky and attempts to pin the rules embed where Discord permissions allow. Forum channels cannot have a single global sticky across all posts; the bot uses a dedicated guide post.
+
+## Environment variables
+
+See `.env.example`. Never commit real bot tokens or API keys. Keep secrets in Railway Variables.
 
 ## Required Discord permissions
 
-The bot needs View Channel, Send Messages, Read Message History, Manage Messages, and Manage Threads for the forum rules post. Pinning requires the applicable permission to pin messages. `Moderate Members` is only needed if serious-violation timeouts are enabled.
-
-## Free AI scanning
-
-Gemini API usage depends on the provider's current free-tier eligibility and quota. If the free quota is exhausted, image classification may become inconclusive; this version keeps the media rather than treating a scanner outage as proof of a violation. Text scanning uses a suspicious-text prefilter to save requests, so it is not a guarantee that every harmful text message will be detected. It does not call an unconfigured “GPT Luna” endpoint.
-
-## Important
-
-Do not re-enable historical cleanup for a live server without testing it in a private test channel first. This bot has no automatic startup cleanup.
-
-
-## Moderation preferences (current)
-
-- Ordinary channel-format mistakes are deleted immediately, with no timeout or violation points. These removals are written to the process console only.
-- Replies remain disabled in profile, skin, hero-highlight, and fan-art showcase channels. Replies are enabled in HOK meme, general meme, and strategy channels. Event-code replies retain the existing approved-status-only behavior.
-- Confirmed serious violations are deleted, logged to the moderation log, and can trigger a 60-minute timeout when the bot has the required permissions.
-- AI scanner exceptions and malformed model responses are logged to the moderation log and console. An inconclusive AI scan does not itself punish a member or delete media.
-- The pinned rules embed and embed-only sticky remain enabled; prompts, config, rules, pinned, and src/ai modules are retained.
+View Channels, Send Messages, Read Message History, Manage Messages, and Manage Threads where the forum guide is used. Pin Messages is needed to pin rules embeds. `Moderate Members` is required for timeouts.
