@@ -23,7 +23,7 @@ const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || null;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || null;
 const LAMPOON_ICON_URL = process.env.LAMPOON_ICON_URL || null; // Embed thumbnail only; intentionally separate from footer icon.
 const LAMPOON_FOOTER_ICON_URL = process.env.LAMPOON_FOOTER_ICON_URL || "https://cdn.discordapp.com/attachments/1532817641490874491/1562134042248478750/Dofoto_20261021_000232084.png?ex=6ad98af2&is=6ad83972&hm=795eb8acb674ed9005ce69ff28781ebeb87aeaab98be3ab60217d4ae035cdcf8&";
@@ -615,9 +615,15 @@ async function ensurePinned(channel, rule) {
 async function ensureSticky(channel, rule, refresh = true) {
   if (!channel?.isTextBased() || channel.type === ChannelType.GuildForum || rule.type === "build") return null;
   if (stickyDisabledChannels.has(channel.id)) return null;
-  if (stickyLocks.get(channel.id)) return stickyMessages.get(channel.id) || null;
+  const activeLock = stickyLocks.get(channel.id);
+  if (activeLock) {
+    await activeLock;
+    return stickyMessages.get(channel.id) || null;
+  }
   const now = Date.now();
-  stickyLocks.set(channel.id, true);
+  let releaseLock;
+  const lockPromise = new Promise(resolve => { releaseLock = resolve; });
+  stickyLocks.set(channel.id, lockPromise);
 
   try {
     const oldStickies = await findExistingStickies(channel);
@@ -658,7 +664,8 @@ async function ensureSticky(channel, rule, refresh = true) {
     console.error(`❌ Sticky failed in #${channel.name}:`, error.message);
     return null;
   } finally {
-    stickyLocks.delete(channel.id);
+    if (stickyLocks.get(channel.id) === lockPromise) stickyLocks.delete(channel.id);
+    releaseLock();
   }
 }
 
