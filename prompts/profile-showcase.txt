@@ -1,7 +1,0 @@
-Check if the image shows an Honor of Kings profile page, account info, match history, gallery, titles, nobility rank, or group badges.
-
-ALLOW if yes — it's clearly profile-related content.
-REJECT if it's clearly unrelated or not HOK.
-If uncertain — return unknown.
-
-Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}

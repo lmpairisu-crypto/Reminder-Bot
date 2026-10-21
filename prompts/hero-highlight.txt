@@ -1,6 +1,0 @@
-This channel is for VIDEOS ONLY — gameplay highlights and clips.
-
-Any image, screenshot, or static picture = REJECT and remove.
-Only video attachments are allowed.
-
-Return JSON only: {"status":"rejected","serious":false,"reason":"Hero Highlight channel is for videos only — image removed."}

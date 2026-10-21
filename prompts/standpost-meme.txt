@@ -1,6 +1,0 @@
-Accept ANY meme, funny image, reaction pic, or internet meme — Honor of Kings is NOT required.
-
-Only REJECT if the content is NSFW, sexual, or seriously inappropriate.
-ALLOW everything else.
-
-Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":true|false,"reason":"short explanation"}

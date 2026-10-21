@@ -1,7 +1,0 @@
-Check if the image is a meme, funny screenshot, edit, reaction image, or parody content RELATED TO HONOR OF KINGS (HOK).
-
-ALLOW if HOK-related and not NSFW.
-REJECT if unrelated, or if it contains NSFW/sexual content.
-If uncertain — return unknown.
-
-Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":true|false,"reason":"short explanation"}
