@@ -93,14 +93,14 @@ const CHANNEL_RULES = {
     type: "hok-meme",
     name: "Community HOK Meme Share",
     description: "Share Honor of Kings memes, funny screenshots, edits, reactions, and parody content.",
-    allowReplies: true,
+    allowReplies: false,
     allowChat: false,
   },
   "1543552879942434837": {
     type: "general-meme",
     name: "Lampoon Standpost Meme",
     description: "Share general memes, funny images, reactions, edits, entertainment, and Honor of Kings memes.",
-    allowReplies: true,
+    allowReplies: false,
     allowChat: false,
   },
   "1541019893552644187": {
@@ -267,6 +267,7 @@ const pinnedMessages = new Map();
 const stickyMessages = new Map();
 const violationCounts = new Map();
 const stickyLocks = new Map();
+const stickyDisabledChannels = new Set();
 
 // ============================================================
 // MEDIA HELPERS
@@ -314,10 +315,16 @@ function containsPossibleCode(text) {
 // ============================================================
 
 const ALLOWED_CODE_REPLIES = ["done", "used", "invalid", "expired", "not work", "error"];
+const APPRECIATION_REPLIES = ["thank you", "thanks", "appreciate it", "i appreciate your help", "thank you so much", "thanks a lot"];
 
+function normalizeShortReply(text) {
+  return String(text || "").trim().toLowerCase().replace(/[.!?]+$/g, "").replace(/\s+/g, " ").trim();
+}
 function isAllowedCodeReply(text) {
-  const clean = text.trim().toLowerCase().replace(/[.!?]+$/g, "").trim();
-  return ALLOWED_CODE_REPLIES.includes(clean);
+  return ALLOWED_CODE_REPLIES.includes(normalizeShortReply(text));
+}
+function isAppreciationReply(text) {
+  return APPRECIATION_REPLIES.includes(normalizeShortReply(text));
 }
 
 // ============================================================
@@ -387,18 +394,19 @@ function createPinnedEmbed(rule) {
     details = [
       `**How to share**\nShare an Honor of Kings event code, redemption screenshot, or redemption instructions.`,
       `**Allowed replies only**\n✅ **done** — successfully claimed\n⚠️ **used** — already claimed\n❌ **invalid** — code not recognized\n⏰ **expired** — no longer active\n🔧 **not work** — couldn't redeem\n🐛 **error** — something went wrong`,
-      `🚫 **Do not use this channel for general chat.** Only the six replies above are allowed when replying to a code post.`
+      `**Appreciation replies**\n💬 Thank you!\n💬 Thanks!\n💬 Appreciate it!\n💬 I appreciate your help!`,
+      `🚫 **Do not use this channel for general chat.** Only the listed status and appreciation replies are allowed when replying to a code post.`
     ];
   } else if (rule.type === "build") {
     details = [
-      `**Topics**\nMatch History • Stats • Hero/Lane Tiers • Arcana • Builds • Map Awareness • Economy • In-game Strategy`,
-      `**Discussion**\nShare useful HOK questions, explanations, tips, match analysis, and strategy. English or Tagalog is welcome.`,
-      `🚫 **Keep posts related to Honor of Kings.** Unrelated real-life chat and off-topic content may be removed.`
+      `**TOPICS**\n• Match History\n• Hero and Lane Tiers\n• Arcanas\n• Builds\n• Map Awareness\n• HOK Economy\n• In-game Strategy\n• In-game Tips\n• Hero Guides\n• Hero Proficiency`,
+      `**DISCUSSION**\nShare useful HOK questions, explanations, tips, match analysis, and strategies. English or Tagalog is welcome.`,
+      `🚫 Keep posts related to Honor of Kings. Unrelated real-life chat and off-topic content may be removed.`
     ];
   } else {
     const replyNote = rule.allowReplies
       ? "✅ Replies are allowed only as described by this channel's rules."
-      : "🚫 Do not reply to another member's post.";
+      : "🚫 Do not reply to other members' posts.";
     const channelNote = rule.type === "general-meme"
       ? "✅ General memes are allowed. Honor of Kings is not required."
       : "🚫 Unrelated content may be removed.";
@@ -409,7 +417,22 @@ function createPinnedEmbed(rule) {
     .setColor(GOLD)
     .setTitle(PINNED_MARKER)
     .setThumbnail(LAMPOON_ICON_URL || client.user?.displayAvatarURL({ extension: "png", size: 256 }) || null)
-    .setDescription(`**${displayName}**\n\n${details.filter(Boolean).join("\n\n━━━━━━━━━━━━━━━━━━\n\n")}`);
+    .setDescription(`**${displayName}**\n\n${details.filter(Boolean).join("\n\n")}`);
+}
+
+function createStickyEmbed(rule) {
+  const displayName = PINNED_TITLES[rule.type] || `${AVISALA} ${rule.name}`;
+  const reminders = {
+    profile: "Share your Honor of Kings profile showcase.\n\n🚫 No replies to other members' posts. Unrelated content may be removed.",
+    skin: "Share Honor of Kings skins, previews, collections, and skin-related screenshots.\n\n🚫 No replies to other members' posts. Unrelated content may be removed.",
+    hero: "Share your Honor of Kings hero highlight videos.\n\n🚫 No replies to other members' posts. Unrelated content may be removed.",
+    "hok-meme": "Share Honor of Kings memes, funny screenshots, edits, reactions, and parody content.\n\n🚫 Do not use this channel for general chatting. Unrelated content may be removed.",
+    "general-meme": "Share general memes, funny images, reactions, edits, and entertainment.\n\n🚫 Do not reply to other members' posts. Unrelated content may be removed.",
+    code: "Share an Honor of Kings event code or redemption screenshot.\n\n🚫 No general chat. Use only the allowed status or appreciation replies when replying to a code post.",
+    fanart: "Share Honor of Kings fan art, drawings, illustrations, edits, and artwork.\n\n🚫 Do not reply to other members' posts. Unrelated content may be removed."
+  };
+  return new EmbedBuilder().setColor(GOLD).setTitle("📌 LAMPOON STICKY")
+    .setDescription(`**${displayName}**\n\n${reminders[rule.type] || rule.description}`);
 }
 
 // ============================================================
@@ -424,7 +447,7 @@ function isPinnedMessage(message) {
 function isStickyBotMessage(message) {
   if (message?.author?.id !== client.user?.id) return false;
   const hasStickyEmbed = message.embeds?.some(embed =>
-    embed.footer?.text === STICKY_MARKER || embed.title === "📌 LAMPOON STICKY"
+    embed.title === "📌 LAMPOON STICKY" || embed.footer?.text === STICKY_MARKER
   );
   if (hasStickyEmbed) return true;
   // Legacy plain-text stickies are recognized only so the bot can remove them.
@@ -523,13 +546,18 @@ async function ensurePinned(channel, rule) {
   return keep;
 }
 
-async function ensureSticky(channel, rule) {
-  if (!channel?.isTextBased() || channel.type === ChannelType.GuildForum) return null;
+async function ensureSticky(channel, rule, refresh = true) {
+  if (!channel?.isTextBased() || channel.type === ChannelType.GuildForum || rule.type === "build") return null;
+  if (stickyDisabledChannels.has(channel.id)) return null;
   if (stickyLocks.get(channel.id)) return stickyMessages.get(channel.id) || null;
   stickyLocks.set(channel.id, true);
 
   try {
     const oldStickies = await findExistingStickies(channel);
+    if (!refresh && oldStickies.length === 1) {
+      stickyMessages.set(channel.id, oldStickies[0]);
+      return oldStickies[0];
+    }
     let deleteFailed = false;
     for (const oldSticky of oldStickies) {
       try {
@@ -547,9 +575,7 @@ async function ensureSticky(channel, rule) {
       return null;
     }
 
-    const stickyEmbed = createPinnedEmbed(rule)
-      .setTitle("📌 LAMPOON STICKY")
-      .setFooter({ text: STICKY_MARKER });
+    const stickyEmbed = createStickyEmbed(rule);
     const newSticky = await channel.send({ embeds: [stickyEmbed] });
     stickyMessages.set(channel.id, newSticky);
     console.log(`💡 Single sticky refreshed in #${channel.name}`);
@@ -694,12 +720,12 @@ async function validateMessage(message, rule) {
   const hasCode = containsPossibleCode(message.content);
   const isOnlyText = !hasMedia && !hasCode && message.content.trim().length > 0;
 
-  // 🎁 CODE CHANNEL — Only 6 specific replies allowed
+  // EVENT CODE SHARE — status/appreciation text is permitted only as a reply.
   if (isOnlyText && rule.type === "code") {
-    if (isAllowedCodeReply(message.content)) {
-      return { allowed: true, serious: false, reason: "Allowed reply." };
+    if (message.reference && (isAllowedCodeReply(message.content) || isAppreciationReply(message.content))) {
+      return { allowed: true, serious: false, reason: isAppreciationReply(message.content) ? "Appreciation reply allowed." : "Allowed code status reply." };
     }
-    return { allowed: false, serious: false, reason: "Only these replies allowed: done, used, invalid, expired, not work, error." };
+    return { allowed: false, serious: false, reason: "Share an event code or screenshot, or use an allowed status/appreciation reply to a code post." };
   }
 
   // 📖 STRATEGY FORUM — HOK/game-related chat ALLOWED
@@ -875,16 +901,21 @@ client.on("messageCreate", async (message) => {
     const rule = directRule || parentRule;
     if (!rule) return;
 
-    await processMessage(message, rule);
+    // Ensure one reminder exists before checking a new submission. Rejected
+    // submissions are deleted without triggering a second sticky refresh.
+    await ensureSticky(channel, rule, false);
+    const processed = await processMessage(message, rule);
 
-    if (channel.isThread?.() && parentRule?.type === "build") {
-      // Other forum posts get validation, but only the dedicated rules post has a sticky.
-      if (forumGuideThreads.get(channel.parentId) === channel.id) {
-        await refreshStickyAfterMessage(channel, rule);
+    if (processed.action === "allowed" && rule.type === "code" && message.reference) {
+      if (isAppreciationReply(message.content)) {
+        await message.reply({ content: "You're welcome! Happy to help!" }).catch(() => {});
+      } else if (isAllowedCodeReply(message.content)) {
+        await message.reply({ content: "Thank you! Your response has been noted." }).catch(() => {});
       }
-      return;
     }
-    await refreshStickyAfterMessage(channel, rule);
+
+    if (channel.isThread?.() && parentRule?.type === "build") return;
+    if (processed.action === "allowed") await refreshStickyAfterMessage(channel, rule);
   } catch (e) { console.error("❌ messageCreate error:", e); }
 });
 
@@ -943,9 +974,8 @@ async function initializeForumChannel(forum, rule) {
   }
 
   forumGuideThreads.set(forum.id, guideThread.id);
-  await ensurePinned(guideThread, rule);
-  await ensureSticky(guideThread, rule);
-  console.log(`📋 Forum rules post ready: #${guideThread.name}`);
+  // Forum channels use one dedicated guide post only: never create a sticky in a forum or its guide thread.
+  console.log(`📋 Forum guide post ready: #${guideThread.name}`);
 }
 
 async function initializeChannel(channelId, rule) {
@@ -963,7 +993,7 @@ async function initializeChannel(channelId, rule) {
       console.warn(`⚠️ ${channelId} is not a supported text channel.`);
       return;
     }
-    await ensurePinned(channel, rule);
+    if (rule.type === "code") await ensurePinned(channel, rule);
     await ensureSticky(channel, rule);
   } catch (e) {
     console.error(`❌ Init failed ${channelId}:`, e.message);
@@ -985,7 +1015,7 @@ async function initializeChannels() {
 
 const commands = [
   new SlashCommandBuilder().setName("sticky-refresh").setDescription("Move sticky to bottom").setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
-  new SlashCommandBuilder().setName("sticky-remove").setDescription("Remove sticky").setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
+  new SlashCommandBuilder().setName("sticky-cleanup").setDescription("Remove all sticky reminders in this channel").setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
   new SlashCommandBuilder().setName("sticky-list").setDescription("List all stickies").setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
   new SlashCommandBuilder().setName("sticky-setup").setDescription("Create sticky").setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
 ].map(c => c.toJSON());
@@ -1009,12 +1039,9 @@ client.on("interactionCreate", async (interaction) => {
 
     if (interaction.commandName === "sticky-refresh") {
       if (!rule) return interaction.reply({ content: "❌ No rule for this channel.", ephemeral: true });
-      if (interaction.channel.type === ChannelType.GuildForum) {
-        await interaction.deferReply({ ephemeral: true });
-        await initializeForumChannel(interaction.channel, rule);
-        return interaction.editReply("✅ Forum rules post and sticky refreshed.");
-      }
+      if (interaction.channel.type === ChannelType.GuildForum || rule.type === "build") return interaction.reply({ content: "ℹ️ Forum channels use a dedicated guide post and do not have sticky reminders.", ephemeral: true });
       await interaction.deferReply({ ephemeral: true });
+      stickyDisabledChannels.delete(interaction.channelId);
       await ensureSticky(interaction.channel, rule);
       return interaction.editReply("✅ Sticky refreshed.");
     }
@@ -1025,19 +1052,26 @@ client.on("interactionCreate", async (interaction) => {
       if (interaction.channel.type === ChannelType.GuildForum) {
         await initializeForumChannel(interaction.channel, rule);
       } else {
-        await ensurePinned(interaction.channel, rule);
+        stickyDisabledChannels.delete(interaction.channelId);
+        if (rule.type === "code") await ensurePinned(interaction.channel, rule);
         await ensureSticky(interaction.channel, rule);
       }
-      return interaction.editReply("✅ Rules embed pinned and one sticky configured.");
+      return interaction.editReply(rule.type === "code" ? "✅ Pinned directions and one sticky reminder configured." : "✅ Sticky reminder configured.");
     }
 
-    if (interaction.commandName === "sticky-remove") {
+    if (interaction.commandName === "sticky-cleanup") {
       await interaction.deferReply({ ephemeral: true });
       const oldStickies = await findExistingStickies(interaction.channel);
-      for (const old of oldStickies) await old.delete().catch(() => {});
-      return interaction.editReply(oldStickies.length
-        ? `✅ Removed ${oldStickies.length} sticky reminder(s).`
-        : "ℹ️ No sticky found.");
+      let removed = 0;
+      for (const old of oldStickies) {
+        try { await old.delete(); removed++; }
+        catch (error) { console.error(`❌ Could not remove sticky ${old.id}:`, error.message); }
+      }
+      stickyMessages.delete(interaction.channelId);
+      stickyDisabledChannels.add(interaction.channelId);
+      return interaction.editReply(removed
+        ? `✅ Removed ${removed} sticky reminder(s). No replacement was created.`
+        : "ℹ️ No sticky reminders found.");
     }
 
     if (interaction.commandName === "sticky-list") {
@@ -1072,7 +1106,7 @@ client.once("clientReady", async () => {
   console.log(`🌍 Tagalog support: ✅ Enabled`);
   console.log(`🧯 AI quota protection: suspicious-text prefilter, result cache, cooldown enabled`);
   console.log(`🧯 AI quota protection: suspicious-text prefilter, result cache, cooldown enabled`);
-  console.log(`📌 Rules embeds are pinned; text channels and the forum guide post get one sticky`);
+  console.log(`📌 Event Code Share directions are pinned; eligible text channels get one sticky; forums use a guide post only`);
   console.log(`🛡️ Historical cleanup is disabled; existing member messages are not scanned at startup`);
   console.log(`🎭 LAMPOON Reminder Bot is online.`);
   console.log("========================================");

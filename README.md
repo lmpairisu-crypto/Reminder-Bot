@@ -13,10 +13,10 @@ All bot logic is in the root `index.js`: configuration, channel rules, pinned em
 
 - Ordinary format/off-topic mistakes are deleted immediately without a timeout; ordinary removals are console-only.
 - Confirmed serious violations are deleted, logged to the moderation channel (when configured) and console, and may trigger a 60-minute timeout if the bot has `Moderate Members` permission and role hierarchy allows it.
-- Replying is disabled in profile, skin, hero, and fan-art showcase channels. Replies are enabled in HOK meme, general meme, event-code, and HOK Strategy Forum channels. Event-code channels still validate reply text against allowed status replies.
+- Replies are disabled in profile, skin, hero, fan-art, HOK meme, and Standpost meme channels. Event Code Share allows only the six status replies or listed appreciation replies when replying to a code post. The bot acknowledges status replies with “Thank you! Your response has been noted.” and appreciation replies with “You're welcome! Happy to help!” HOK Strategy Forum allows HOK-related discussion.
 - The Gemini scanner uses conservative prompts, a short-lived result cache, a quota cooldown, up to three images per message, and a maximum image size of 6 MB. Scanner failures or inconclusive image results do not by themselves prove a violation.
 - Only new messages are moderated; the bot does not scan or delete historical messages on startup.
-- Sticky reminders are embed-only. The bot keeps one recognized sticky and attempts to pin the rules embed where Discord permissions allow. Forum channels cannot have a single global sticky across all posts; the bot uses a dedicated guide post.
+- Sticky reminders are embed-only. Eligible text channels get one embed-only sticky reminder without a visible footer or divider lines. Event Code Share has separate pinned directions and a sticky reminder. HOK Strategy Forum uses a dedicated guide post only and never gets a sticky. `/sticky-cleanup` removes all recognized sticky reminders in the current channel without recreating one. Pinned directions are limited to Event Code Share and the Strategy Forum guide post.
 
 ## Environment variables
 
