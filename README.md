@@ -1,13 +1,18 @@
-# LAMPOON Reminder Bot — Consolidated Single-File Build
+# LAMPOON Reminder Bot — Render + UptimeRobot Build
 
 All bot logic is in the root `index.js`: configuration, channel rules, pinned embeds, embed-only sticky reminders, Gemini image/text scanner prompts, validation, moderation, and slash commands. There are no `config/`, `rules/`, `pinned/`, `prompts/`, or `src/ai/` folders.
 
-## Deploy on Railway
+## Deploy on Render with UptimeRobot
 
-1. Upload the four root files in this ZIP to your repository/deployment.
-2. In Railway → Variables, set `DISCORD_TOKEN`, `CLIENT_ID`, and `GUILD_ID`. Set `GEMINI_API_KEY` for AI scanning. Optional: `GEMINI_MODEL` and `MOD_LOG_CHANNEL_ID`. The supplied LAMPOON icon URL is configured as the default for embed thumbnails and footer icons; set `LAMPOON_ICON_URL` only if you want to override it.
-3. Deploy using `npm start` (or `node index.js`).
-4. Run `npm run check` to syntax-check `index.js`.
+1. Upload the project files in this ZIP to a GitHub repository. Keep `.env` and all real tokens/API keys out of GitHub.
+2. In Render, create a **Web Service** from the repository and select the Free instance type.
+3. Set **Build Command** to `npm install` and **Start Command** to `npm start`.
+4. In Render → Environment, set `DISCORD_TOKEN`, `CLIENT_ID`, and `GUILD_ID`. Set `GEMINI_API_KEY` for AI scanning. Optional: `GEMINI_MODEL`, `MOD_LOG_CHANNEL_ID`, `LAMPOON_ICON_URL`, and `LAMPOON_FOOTER_ICON_URL`.
+5. In Render's health-check path setting, use `/health`. Render supplies the `PORT` environment variable automatically; the server listens on it (or `10000` as a fallback).
+6. In UptimeRobot, create an HTTP(s) monitor for `https://YOUR-RENDER-SERVICE.onrender.com/health`, using the free 5-minute interval if available. A successful response is `OK` with HTTP 200.
+7. Run `npm run check` to syntax-check `index.js` before deploying.
+
+**Free-plan uptime note:** Render Free web services can spin down after 15 minutes without inbound traffic. UptimeRobot requests may keep the service receiving traffic, but this is not a guaranteed or supported 24/7 uptime guarantee. A health endpoint only confirms that the HTTP process is responding; it does not prevent every sleep, restart, or Discord disconnection.
 
 ## Moderation behavior
 
@@ -31,3 +36,13 @@ View Channels, Send Messages, Read Message History, Manage Messages, and Manage 
 - `LAMPOON_ICON_URL` controls the embed thumbnail only. Leave it blank to omit the thumbnail.
 - `LAMPOON_FOOTER_ICON_URL` controls the footer icon only and defaults to the supplied footer image URL.
 - These settings are independent; the footer icon is never reused as the thumbnail.
+
+
+## Latest moderation and embed fixes
+
+- Sticky embed titles now identify the channel: PROFILE SHOWCASE, SKIN SHOWCASE, HERO HIGHLIGHTS, HOK MEMES SHARE, STANDPOST MEME SHARE, REDEMPTION CODE SHARE, and HOK FAN-ART SHARE.
+- Sticky is refreshed to the bottom before spam checks, content scanning, and removal; refresh throttling and duplicate cleanup remain enabled.
+- Embed footer reads `LAMPOON • Moderation 🔨`. Existing pinned embeds are edited to update the footer.
+- Removal reasons explain the actual behavior and how to post correctly; the mod-log `Reason` field is separate from the original `Message` field.
+- The profile image scanner prompt now rejects unrelated images and requires a clearly identifiable Honor of Kings profile/account showcase. Scanner failures or inconclusive results do not automatically delete media.
+- Ordinary messageCreate events cannot receive true ephemeral replies in Discord. The bot does not DM; it uses one temporary channel warning per user/channel cooldown as the closest available substitute.

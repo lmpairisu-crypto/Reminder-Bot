@@ -1,4 +1,5 @@
 require("dotenv").config();
+const http = require("http");
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
@@ -36,13 +37,13 @@ const AVISALA = "<a:Avisala:1542448826265243660>";
 
 function applyLampoonFooter(embed) {
   const iconURL = LAMPOON_FOOTER_ICON_URL;
-  const footer = { text: "LAMPOON Moderation" };
+  const footer = { text: "LAMPOON • Moderation 🔨" };
   if (iconURL) footer.iconURL = iconURL;
   return embed.setFooter(footer);
 }
 
 const IMAGE_PROMPTS = {
-    profile: `Check whether this image is an Honor of Kings profile/account showcase. Do not infer violations from uncertain images. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
+    profile: `This is a strict Honor of Kings PROFILE SHOWCASE channel. Accept only images that visibly show an Honor of Kings player profile, in-game account profile, profile showcase, player statistics/profile page, or unmistakable HOK profile screen. Reject text-only content (handled separately), unrelated games, selfies, reaction images, emojis/stickers, food, scenery, unrelated memes, and screenshots unrelated to a HOK player profile. Do not approve an image merely because it is a game screenshot; it must clearly show a HOK profile/account showcase. Use "unknown" only when the image genuinely cannot be assessed (corrupted, unreadable, or unavailable). Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
     skin: `This is a strict Honor of Kings SKIN SHOWCASE channel. Accept only images that visibly show an Honor of Kings skin, skin preview, in-game hero appearance using a skin, skin collection, or an unmistakable HOK skin screen. Reject clearly unrelated images, including unrelated games, selfies, reaction images, emojis/stickers, food, scenery, unrelated memes, and screenshots unrelated to HOK. Do not approve an image merely because it is a game screenshot; the image must clearly relate to an HOK skin. Use "unknown" only if the image genuinely cannot be assessed (for example, corrupted/unreadable image). Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
     "hok-meme": `Check whether this image is an Honor of Kings-related meme. Do not infer violations from uncertain images. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
     "general-meme": `General memes are allowed, including non-HOK memes. Only flag clearly serious prohibited content such as explicit sexual content, credible threats, targeted severe harassment, or obvious scams. Do not guess from ambiguity. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":true|false,"reason":"short explanation"}`,
@@ -446,11 +447,11 @@ function createStickyEmbed(rule) {
   const titles = {
     profile: `${AVISALA} PROFILE SHOWCASE`,
     skin: `${AVISALA} SKIN SHOWCASE`,
-    hero: `${AVISALA} HERO HIGHLIGHT`,
-    "hok-meme": `${AVISALA} HOK MEME SHARE`,
-    "general-meme": `${AVISALA} LAMPOON STANDPOST MEME`,
-    code: `${AVISALA} EVENT CODE SHARE`,
-    fanart: `${AVISALA} FAN ART`,
+    hero: `${AVISALA} HERO HIGHLIGHTS`,
+    "hok-meme": `${AVISALA} HOK MEMES SHARE`,
+    "general-meme": `${AVISALA} STANDPOST MEME SHARE`,
+    code: `${AVISALA} REDEMPTION CODE SHARE`,
+    fanart: `${AVISALA} HOK FAN-ART SHARE`,
     build: `${AVISALA} HOK STRATEGY FORUM`,
   };
   const introductions = {
@@ -474,22 +475,10 @@ function createStickyEmbed(rule) {
     build: "🚫 Keep posts and discussions related to Honor of Kings strategy. Unrelated content may be removed.",
   };
 
-  const sectionTitles = {
-    profile: "PROFILE SHOWCASE",
-    skin: "SKIN SHOWCASE",
-    hero: "HERO HIGHLIGHT",
-    "hok-meme": "HOK MEME SHARE",
-    "general-meme": "LAMPOON STANDPOST MEME",
-    code: "EVENT CODE SHARE",
-    fanart: "FAN ART",
-    build: "HOK STRATEGY FORUM",
-  };
-
-  const sectionTitle = sectionTitles[rule.type] || rule.name || "CHANNEL REMINDER";
   const embed = new EmbedBuilder()
     .setColor(GOLD)
-    .setTitle("📢 READ REMINDER !")
-    .setDescription(`**${AVISALA} ${sectionTitle}**\n\n${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
+    .setTitle(titles[rule.type] || `${AVISALA} ${rule.name || "CHANNEL REMINDER"}`)
+    .setDescription(`${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
   // Every active sticky reminder uses the LAMPOON thumbnail independently of the footer icon.
   if (LAMPOON_ICON_URL) embed.setThumbnail(LAMPOON_ICON_URL);
   return applyLampoonFooter(embed);
@@ -507,7 +496,7 @@ function isPinnedMessage(message) {
 function isStickyBotMessage(message) {
   if (message?.author?.id !== client.user?.id) return false;
   const hasStickyEmbed = message.embeds?.some(embed =>
-    (embed.title === "📌 CHANNEL TOPICS" || embed.title === "📌 LAMPOON STICKY" || embed.title === "📢 READ REMINDER !" || embed.title === "🎙️ READ REMINDER !" || embed.title === "📌 READ REMINDER !") || embed.footer?.text === STICKY_MARKER
+    (embed.title === "📌 CHANNEL TOPICS" || embed.title === "📌 LAMPOON STICKY" || embed.title === "📢 READ REMINDER !" || embed.title === "🎙️ READ REMINDER !" || embed.title === "📌 READ REMINDER !" || /(?:PROFILE SHOWCASE|SKIN SHOWCASE|HERO HIGHLIGHTS|HOK MEMES SHARE|STANDPOST MEME SHARE|REDEMPTION CODE SHARE|HOK FAN-ART SHARE|HOK STRATEGY FORUM)/i.test(embed.title || "")) || embed.footer?.text === STICKY_MARKER
   );
   if (hasStickyEmbed) return true;
   // Legacy plain-text stickies are recognized only so the bot can remove them.
@@ -605,7 +594,7 @@ async function ensurePinned(channel, rule) {
 
   if (keep) {
     const current = keep.embeds[0];
-    if (current?.description !== embed.data.description || current?.title !== embed.data.title) {
+    if (current?.description !== embed.data.description || current?.title !== embed.data.title || current?.footer?.text !== embed.data.footer?.text) {
       await keep.edit({ embeds: [embed] });
       console.log(`📝 Updated rules embed in #${channel.name}`);
     }
@@ -792,9 +781,25 @@ async function validateMessage(message, rule) {
     if (seriousText.serious) return { allowed: false, serious: true, reason: seriousText.reason };
   }
 
-  // Block replies where not allowed
+  // Block replies where not allowed and explain how to post correctly.
   if (message.reference && !rule.allowReplies) {
-    return { allowed: false, serious: false, reason: "Replies are not allowed in this channel." };
+    const channelLabel = ({
+      profile: "Profile Showcase",
+      skin: "Skin Showcase",
+      hero: "Hero Highlights",
+      "hok-meme": "HOK Memes Share",
+      "general-meme": "Standpost Meme Share",
+      fanart: "HOK Fan-Art Share",
+    })[rule.type] || rule.name || "this channel";
+    const requirement = ({
+      profile: "Post your own Honor of Kings profile/account image or video as a new message.",
+      skin: "Post your own image/video clearly showing an Honor of Kings skin as a new message.",
+      hero: "Upload your own Honor of Kings gameplay highlight video as a new message.",
+      "hok-meme": "Post your own Honor of Kings-related meme image/video as a new message.",
+      "general-meme": "Post your own meme as a new message instead of replying to another member.",
+      fanart: "Post your own Honor of Kings-related artwork image as a new message.",
+    })[rule.type] || "Create a new on-topic post instead of replying.";
+    return { allowed: false, serious: false, reason: `Comment/reply in ${channelLabel} is not allowed. ${requirement}` };
   }
 
   const hasMedia = images.length > 0 || videos.length > 0;
@@ -830,7 +835,12 @@ async function validateMessage(message, rule) {
   }
 
   if (rule.type === "profile") {
-    if (!images.length && !videos.length) return { allowed: false, serious: false, reason: "Profile image/video required." };
+    if (!images.length && !videos.length) {
+      const reason = message.reference
+        ? "Commenting on another member's Profile Showcase is not allowed. Post your own Honor of Kings profile image/video as a new message instead."
+        : "Text-only post in Profile Showcase. Attach an Honor of Kings profile/account screenshot or profile video; plain text such as 'Hi' is not accepted."
+      return { allowed: false, serious: false, reason };
+    }
     if (images.length) {
       const scan = await scanMessageImages(images, "profile");
       if (scan.serious) return { allowed: false, serious: true, reason: scan.reason };
@@ -841,7 +851,12 @@ async function validateMessage(message, rule) {
   }
 
   if (rule.type === "skin") {
-    if (!images.length && !videos.length) return { allowed: false, serious: false, reason: "Skin image/video required. Emoji-only or text-only messages are not accepted in this channel." };
+    if (!images.length && !videos.length) {
+      const reason = message.reference
+        ? "Commenting on another member's Skin Showcase is not allowed. Post your own Honor of Kings skin image/video as a new message instead."
+        : "Text-only post in Skin Showcase. Attach an image/video that clearly shows an Honor of Kings skin; plain text or emoji-only messages are not accepted."
+      return { allowed: false, serious: false, reason };
+    }
     if (images.length) {
       const scan = await scanMessageImages(images, "skin");
       if (scan.serious) return { allowed: false, serious: true, reason: scan.reason };
@@ -852,12 +867,22 @@ async function validateMessage(message, rule) {
   }
 
   if (rule.type === "hero") {
-    if (!videos.length) return { allowed: false, serious: false, reason: "Hero highlight video required." };
+    if (!videos.length) {
+      const reason = message.reference
+        ? "Commenting on another member's Hero Highlights post is not allowed. Upload your own Honor of Kings gameplay highlight video as a new message instead."
+        : "Hero Highlights requires an Honor of Kings gameplay highlight video. Attach a video; text or an image alone does not meet this channel's format."
+      return { allowed: false, serious: false, reason };
+    }
     return { allowed: true, serious: false, reason: "Accepted." };
   }
 
   if (rule.type === "hok-meme") {
-    if (!images.length && !videos.length) return { allowed: false, serious: false, reason: "Meme image/video required." };
+    if (!images.length && !videos.length) {
+      const reason = message.reference
+        ? "Commenting on another member's HOK Memes Share post is not allowed. Post your own Honor of Kings meme image/video as a new message instead."
+        : "HOK Memes Share requires an Honor of Kings-related meme image or video. Plain text alone is not accepted."
+      return { allowed: false, serious: false, reason };
+    }
     if (images.length) {
       const scan = await scanMessageImages(images, "hok-meme");
       if (scan.serious) return { allowed: false, serious: true, reason: scan.reason };
@@ -870,7 +895,12 @@ async function validateMessage(message, rule) {
   if (rule.type === "code") return validateEventCode(message);
 
   if (rule.type === "fanart") {
-    if (!images.length) return { allowed: false, serious: false, reason: "Fan art image required." };
+    if (!images.length) {
+      const reason = message.reference
+        ? "Commenting on another member's HOK Fan-Art Share post is not allowed. Post your own Honor of Kings fan-art image as a new message instead."
+        : "HOK Fan-Art Share requires an image of your Honor of Kings-related artwork. Text or video alone does not meet this channel's format."
+      return { allowed: false, serious: false, reason };
+    }
     const scan = await scanMessageImages(images, "fanart");
     if (scan.serious) return { allowed: false, serious: true, reason: scan.reason };
     if (scan.rejected) return { allowed: false, serious: false, reason: scan.reason || "Not HOK fan art." };
@@ -959,20 +989,20 @@ async function deleteOnly(message, reason) {
   await logRemovedMessage(message, reason, false);
   await message.delete().catch(e => console.error("❌ Delete failed:", e.message));
 
-  // Normal messageCreate events cannot produce true ephemeral replies. Never DM;
-  // send at most one short-lived channel warning per user/channel cooldown.
+  // A messageCreate event cannot receive a true ephemeral reply. Never DM.
+  // Use one short-lived channel warning at most once per user/channel cooldown as the closest available substitute.
   const warningKey = `${message.guild.id}:${message.channel.id}:${message.author.id}`;
   const now = Date.now();
   if (now - (warningLastSentAt.get(warningKey) || 0) >= WARNING_COOLDOWN_MS) {
     warningLastSentAt.set(warningKey, now);
     try {
       const warning = await message.channel.send({
-        content: `${message.author} — your post was removed. **Reason:** ${reason}\nPlease review this channel's rules before posting again.`,
+        content: `${message.author} — your message was removed. **Reason:** ${reason}\n**How to fix it:** Follow the channel format above and post your own required HOK image/video as a new message when applicable.`,
         allowedMentions: { users: [message.author.id] },
       });
       setTimeout(() => warning.delete().catch(() => {}), 8000);
     } catch (e) {
-      console.warn("⚠️ Could not post temporary channel warning:", e.message);
+      console.warn("⚠️ Could not post temporary moderation notice:", e.message);
     }
   }
 
@@ -1040,6 +1070,10 @@ client.on("messageCreate", async (message) => {
     const rule = directRule || parentRule;
     if (!rule) return;
 
+    // Move the single sticky down before any scan or deletion, including spam handling.
+    // The cooldown prevents excessive reposting; duplicate cleanup keeps one sticky per channel.
+    await ensureSticky(channel, rule, true);
+
     // Repeated rapid messages are treated as a serious violation, not as ordinary mistakes.
     const spam = detectSpam(message);
     if (spam.spam) {
@@ -1054,8 +1088,7 @@ client.on("messageCreate", async (message) => {
       return;
     }
 
-    // Ensure one reminder exists before checking a new submission, then scan/moderate it.
-    await ensureSticky(channel, rule, false);
+    // The sticky has already been moved down before validation/scanning/removal.
     const processed = await processMessage(message, rule);
 
     if (processed.action === "allowed" && rule.type === "code" && message.reference) {
@@ -1282,6 +1315,29 @@ process.on("SIGTERM", () => {
   console.log("📤 Shutting down gracefully...");
   client.destroy();
   process.exit(0);
+});
+
+// ============================================================
+// RENDER HEALTH ENDPOINT
+// ============================================================
+// Render supplies PORT automatically. UptimeRobot can monitor /health.
+// This endpoint reports that the Node.js HTTP process is responding;
+// it does not guarantee that Render Free will remain awake 24/7.
+const PORT = Number(process.env.PORT) || 10000;
+const healthServer = http.createServer((req, res) => {
+  const pathname = new URL(req.url, `http://${req.headers.host || "localhost"}`).pathname;
+
+  if (req.method === "GET" && pathname === "/health") {
+    res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+    return res.end("OK");
+  }
+
+  res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+  res.end("Reminder Bot is online.");
+});
+
+healthServer.listen(PORT, "0.0.0.0", () => {
+  console.log(`🌐 Render health server running on port ${PORT}`);
 });
 
 // ============================================================
