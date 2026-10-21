@@ -486,18 +486,25 @@ function createStickyEmbed(rule) {
     build: "🚫 Keep posts and discussions related to Honor of Kings strategy. Unrelated content may be removed.",
   };
 
-  const embed = new EmbedBuilder()
-  .setColor(GOLD)
-  .setTitle("📢 READ REMINDER!")
-  .setDescription(
-    `**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n` +
-    `${introductions[rule.type] || rule.description}\n\n` +
-    `**CHANNEL RULES**\n\n` +
-    `${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}\n\n` +
-    `${STICKY_MARKER}`
-  );
+    const embed = new EmbedBuilder()
+    .setColor(GOLD)
+    .setTitle("📢 READ REMINDER!")
+    .setDescription(
+      `**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n` +
+      `${introductions[rule.type] || rule.description}\n\n` +
+      `**CHANNEL RULES**\n\n` +
+      `${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}\n\n` +
+      `${STICKY_MARKER}`
+    );
 
-// KEEP your original thumbnail setting here.
+  // Preserve the original LAMPOON thumbnail.
+  if (LAMPOON_ICON_URL) {
+    embed.setThumbnail(LAMPOON_ICON_URL);
+  }
+
+  // Preserve the LAMPOON moderation footer.
+  return applyLampoonFooter(embed);
+}
 
 // ============================================================
 // DETECT MESSAGES
