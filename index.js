@@ -475,14 +475,16 @@ function createStickyEmbed(rule) {
     build: "🚫 Keep posts and discussions related to Honor of Kings strategy. Unrelated content may be removed.",
   };
 
-  const embed = new EmbedBuilder()
-    .setColor(GOLD)
-    .setTitle(titles[rule.type] || `${AVISALA} ${rule.name || "CHANNEL REMINDER"}`)
-    .setDescription(`${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
-  // Every active sticky reminder uses the LAMPOON thumbnail independently of the footer icon.
-  if (LAMPOON_ICON_URL) embed.setThumbnail(LAMPOON_ICON_URL);
-  return applyLampoonFooter(embed);
-}
+  
+const embed = new EmbedBuilder()
+  .setColor(GOLD)
+  .setTitle("📢 READ REMINDER!")
+  .setDescription(
+    `**${titles[rule.type] || `${AVISALA} ${rule.name || "CHANNEL REMINDER"}`}**\n\n` +
+    `${introductions[rule.type] || rule.description}\n\n` +
+    `**CHANNEL RULES**\n\n` +
+    `${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`
+  );
 
 // ============================================================
 // DETECT MESSAGES
