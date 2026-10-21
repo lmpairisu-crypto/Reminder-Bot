@@ -446,14 +446,14 @@ function createPinnedEmbed(rule) {
 
 function createStickyEmbed(rule) {
   const titles = {
-    profile: `${AVISALA} PROFILE SHOWCASE`,
-    skin: `${AVISALA} SKIN SHOWCASE`,
-    hero: `${AVISALA} HERO HIGHLIGHTS`,
-    "hok-meme": `${AVISALA} HOK MEMES SHARE`,
-    "general-meme": `${AVISALA} STANDPOST MEME SHARE`,
-    code: `${AVISALA} REDEMPTION CODE SHARE`,
-    fanart: `${AVISALA} HOK FAN-ART SHARE`,
-    build: `${AVISALA} HOK STRATEGY FORUM`,
+    profile: "PROFILE SHOWCASE",
+    skin: "SKIN SHOWCASE",
+    hero: "HERO HIGHLIGHTS",
+    "hok-meme": "HOK MEMES SHARE",
+    "general-meme": "STANDPOST MEME SHARE",
+    code: "REDEMPTION CODE SHARE",
+    fanart: "HOK FAN-ART SHARE",
+    build: "HOK STRATEGY FORUM",
   };
   const introductions = {
     profile: "Share your Honor of Kings profile showcase and let the community see your in-game identity, achievements, and progress!",
@@ -478,11 +478,14 @@ function createStickyEmbed(rule) {
 
   const embed = new EmbedBuilder()
     .setColor(GOLD)
-    .setTitle(titles[rule.type] || `${AVISALA} ${rule.name || "CHANNEL REMINDER"}`)
-    .setDescription(`${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
-  // Every active sticky reminder uses the LAMPOON thumbnail independently of the footer icon.
+    .setTitle("📢 READ REMINDER!")
+    .setDescription(`**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
   if (LAMPOON_ICON_URL) embed.setThumbnail(LAMPOON_ICON_URL);
-  return applyLampoonFooter(embed);
+  applyLampoonFooter(embed);
+  // Invisible identifier lets cleanup reliably find this embed even if its title changes.
+  const footer = { text: `LAMPOON • Moderation 🔨${STICKY_MARKER}` };
+  if (LAMPOON_FOOTER_ICON_URL) footer.iconURL = LAMPOON_FOOTER_ICON_URL;
+  return embed.setFooter(footer);
 }
 
 // ============================================================
@@ -495,31 +498,33 @@ function isPinnedMessage(message) {
 }
 
 function isStickyBotMessage(message) {
-  if (message?.author?.id !== client.user?.id) return false;
-  const hasStickyEmbed = message.embeds?.some(embed =>
-    (embed.title === "📌 CHANNEL TOPICS" || embed.title === "📌 LAMPOON STICKY" || embed.title === "📢 READ REMINDER !" || embed.title === "🎙️ READ REMINDER !" || embed.title === "📌 READ REMINDER !" || /(?:PROFILE SHOWCASE|SKIN SHOWCASE|HERO HIGHLIGHTS|HOK MEMES SHARE|STANDPOST MEME SHARE|REDEMPTION CODE SHARE|HOK FAN-ART SHARE|HOK STRATEGY FORUM)/i.test(embed.title || "")) || embed.footer?.text === STICKY_MARKER
-  );
-  if (hasStickyEmbed) return true;
-  // Legacy plain-text stickies are recognized only so the bot can remove them.
-  const content = message.content || "";
-  if (message.embeds?.length) return false;
-  if (content.includes(STICKY_MARKER)) return true;
+  if (!message) return false;
+  const embeds = message.embeds || [];
+  const hasMarker = embeds.some(embed =>
+    (embed.footer?.text || "").includes(STICKY_MARKER) ||
+    (embed.description || "").includes(STICKY_MARKER)
+  ) || (message.content || "").includes(STICKY_MARKER);
+  if (hasMarker) return true;
 
-  // Recognize previous versions' plain-text reminders so upgrades can clean them up.
+  // Legacy reminders from earlier bot versions may not carry the invisible marker.
+  // Match only known reminder titles/content and allow cleanup after a bot-token change.
+  const knownTitles = /(?:READ\s*REMINDER\s*!?|CHANNEL\s*TOPICS|LAMPOON\s*STICKY|PROFILE\s*SHOWCASE|SKIN\s*SHOWCASE|HERO\s*HIGHLIGHTS?|HOK\s*MEMES?\s*SHARE|STANDPOST\s*MEME\s*SHARE|REDEMPTION\s*CODE\s*SHARE|HOK\s*FAN[- ]?ART|HOK\s*STRATEGY\s*FORUM)/i;
   const legacyPhrases = [
-    "Post your profile showcase below",
-    "Show off your skins",
-    "Share your best plays and highlights below",
-    "Keep it funny, keep it HOK",
-    "Meme away — make someone smile",
-    "Please reply ONLY with:",
-    "Share your amazing art",
-    "Chat freely about Honor of Kings",
-    "Please reply only with:",
-    "Keep discussion related to Honor of Kings",
+    "Post your profile showcase below", "Show off your skins",
+    "Share your best plays and highlights below", "Keep it funny, keep it HOK",
+    "Meme away — make someone smile", "Please reply ONLY with:",
+    "Share your amazing art", "Chat freely about Honor of Kings",
+    "Please reply only with:", "Keep discussion related to Honor of Kings",
   ];
-  return content.startsWith("💡") ||
-    legacyPhrases.some(phrase => content.toLowerCase().includes(phrase.toLowerCase()));
+  const isBotAuthored = Boolean(message.author?.bot || (client.user && message.author?.id === client.user.id));
+  const titleMatch = embeds.some(embed => knownTitles.test(embed.title || ""));
+  const description = embeds.map(embed => embed.description || "").join("\n");
+  const content = message.content || "";
+  const hasLegacySignature = legacyPhrases.some(phrase =>
+    `${content}\n${description}`.toLowerCase().includes(phrase.toLowerCase())
+  );
+  return titleMatch && (isBotAuthored || description.includes("LAMPOON") || description.includes("CHANNEL RULES")) ||
+    (isBotAuthored && (content.startsWith("💡") || hasLegacySignature));
 }
 
 async function fetchRecentMessages(channel, maxMessages = 200) {
@@ -574,7 +579,7 @@ async function findExistingPinned(channel) {
 
 async function findExistingStickies(channel) {
   try {
-    return (await fetchRecentMessages(channel, 200)).filter(isStickyBotMessage);
+    return (await fetchRecentMessages(channel, 2000)).filter(isStickyBotMessage);
   } catch (error) {
     console.error(`❌ Sticky search failed in #${channel.name}:`, error.message);
     return [];
@@ -936,19 +941,32 @@ async function sendModerationLog(embed) {
 }
 
 async function timeoutMember(member, minutes, reason) {
+  if (!member) return { ok: false, reason: "Member could not be fetched." };
+  if (member.user.bot) return { ok: false, reason: "Bot accounts cannot be timed out by this handler." };
+  if (minutes <= 0) return { ok: false, reason: "Timeout duration is disabled." };
+
   try {
-    if (!member || member.user.bot) return false;
-    const me = member.guild.members.me;
-    if (!me || !me.permissions.has(PermissionFlagsBits.ModerateMembers)) return false;
-    if (member.roles.highest.position >= me.roles.highest.position) return false;
-    if (minutes <= 0) return false; // Skip if timeout = 0
-    await member.timeout(Math.max(1, minutes) * 60 * 1000, reason);
+    // Fetch the bot member freshly so permission/role checks use current Discord state.
+    const me = await member.guild.members.fetchMe().catch(() => member.guild.members.me);
+    if (!me) return { ok: false, reason: "Could not fetch the bot's guild member." };
+    if (!me.permissions.has(PermissionFlagsBits.ModerateMembers)) {
+      return { ok: false, reason: "Bot is missing the Moderate Members permission." };
+    }
+    if (member.id === me.id) return { ok: false, reason: "The bot cannot time itself out." };
+    if (member.roles.highest.position >= me.roles.highest.position) {
+      return { ok: false, reason: "Target member's highest role is equal to or above the bot's highest role." };
+    }
+    await member.timeout(minutes * 60 * 1000, reason);
     await sendModerationLog(
       new EmbedBuilder().setColor("#FF9900").setTitle("⏱️ MEMBER TIMEOUT")
         .setDescription(`**Member:** ${member}\n**Duration:** ${minutes} min\n**Reason:** ${reason}`).setTimestamp()
     );
-    return true;
-  } catch (e) { console.error("❌ Timeout failed:", e.message); return false; }
+    console.log(`⏱️ Timeout applied: ${member.user.tag} for ${minutes} minute(s).`);
+    return { ok: true, reason: `Timed out ${minutes} min.` };
+  } catch (e) {
+    console.error(`❌ Timeout failed for ${member.user?.tag || member.id}:`, e.message);
+    return { ok: false, reason: `Discord rejected the timeout: ${String(e.message || e).slice(0, 300)}` };
+  }
 }
 
 async function registerViolation(message, reason, serious = false, isSpam = false) {
@@ -973,9 +991,11 @@ async function registerViolation(message, reason, serious = false, isSpam = fals
     : SERIOUS_VIOLATION_TIMEOUT_MINUTES;
   if (isSpam && isTimeoutExemptChannel) {
     action = "Timeout skipped (Code Share/Forum exemption).";
-  } else if (member && timeoutMinutes > 0) {
-    const didTimeout = await timeoutMember(member, timeoutMinutes, reason);
-    if (didTimeout) action = `Timed out ${timeoutMinutes} min.`;
+  } else if (timeoutMinutes > 0) {
+    const timeoutResult = await timeoutMember(member, timeoutMinutes, reason);
+    action = timeoutResult.ok
+      ? timeoutResult.reason
+      : `TIMEOUT NOT APPLIED: ${timeoutResult.reason}`;
   }
 
   await sendModerationLog(
@@ -1265,17 +1285,23 @@ client.on("interactionCreate", async (interaction) => {
 
     if (interaction.commandName === "sticky-cleanup") {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      // Disable creation first, then wait for an in-flight refresh to finish before scanning.
+      stickyDisabledChannels.add(interaction.channelId);
+      const activeLock = stickyLocks.get(interaction.channelId);
+      if (activeLock) await activeLock;
+      stickyMessages.delete(interaction.channelId);
+      stickyLastRefreshAt.delete(interaction.channelId);
       const oldStickies = await findExistingStickies(interaction.channel);
       let removed = 0;
+      let failed = 0;
       for (const old of oldStickies) {
         try { await old.delete(); removed++; }
-        catch (error) { console.error(`❌ Could not remove sticky ${old.id}:`, error.message); }
+        catch (error) { failed++; console.error(`❌ Could not remove sticky ${old.id}:`, error.message); }
       }
-      stickyMessages.delete(interaction.channelId);
-      stickyDisabledChannels.add(interaction.channelId);
+      if (failed) return interaction.editReply(`⚠️ Removed ${removed} sticky reminder(s), but ${failed} could not be deleted. Check the bot's Manage Messages permission and server logs.`);
       return interaction.editReply(removed
-        ? `✅ Removed ${removed} sticky reminder(s). No replacement was created.`
-        : "ℹ️ No sticky reminders found.");
+        ? `✅ Removed ${removed} sticky reminder(s). Sticky creation is disabled in this channel until /sticky-refresh or /sticky-setup is used.`
+        : "ℹ️ No recognized sticky reminders were found in the last 2,000 messages. Check the bot's permissions and whether the duplicate was sent by this bot or an older bot account.");
     }
 
     if (interaction.commandName === "sticky-list") {
