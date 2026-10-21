@@ -35,7 +35,7 @@ const AVISALA = "<a:Avisala:1542448826265243660>";
 
 function applyLampoonFooter(embed) {
   const iconURL = LAMPOON_FOOTER_ICON_URL;
-  const footer = { text: "LAMPOON Moderation" };
+  const footer = { text: "LAMPOON • Moderation 🔨" };
   if (iconURL) footer.iconURL = iconURL;
   return embed.setFooter(footer);
 }
@@ -598,7 +598,7 @@ async function ensurePinned(channel, rule) {
   return keep;
 }
 
-async function ensureSticky(channel, rule, refresh = true) {
+async function ensureSticky(channel, rule, refresh = false) {
   if (!channel?.isTextBased() || channel.type === ChannelType.GuildForum || rule.type === "build") return null;
   if (stickyDisabledChannels.has(channel.id)) return null;
   if (stickyLocks.get(channel.id)) return stickyMessages.get(channel.id) || null;
@@ -606,10 +606,35 @@ async function ensureSticky(channel, rule, refresh = true) {
 
   try {
     const oldStickies = await findExistingStickies(channel);
-    if (!refresh && oldStickies.length === 1) {
-      stickyMessages.set(channel.id, oldStickies[0]);
-      return oldStickies[0];
+    const stickyEmbed = createStickyEmbed(rule);
+
+    // Startup/normal checks preserve and EDIT an existing reminder in place.
+    // Redeploys therefore don't repost the reminder or create duplicates.
+    if (!refresh && oldStickies.length > 0) {
+      const keep = [...oldStickies].sort((a, b) => b.createdTimestamp - a.createdTimestamp)[0];
+      let duplicateDeleteFailed = false;
+      for (const duplicate of oldStickies) {
+        if (duplicate.id === keep.id) continue;
+        try {
+          await duplicate.delete();
+          console.log(`🧹 Removed duplicate sticky in #${channel.name}`);
+        } catch (error) {
+          duplicateDeleteFailed = true;
+          console.error(`❌ Could not remove duplicate sticky in #${channel.name}:`, error.message);
+        }
+      }
+      if (duplicateDeleteFailed) console.warn(`⚠️ Duplicate cleanup was incomplete in #${channel.name}.`);
+      const current = keep.embeds?.[0];
+      if (current?.title !== stickyEmbed.data.title || current?.description !== stickyEmbed.data.description || current?.thumbnail?.url !== stickyEmbed.data.thumbnail?.url || current?.footer?.text !== stickyEmbed.data.footer?.text) {
+        await keep.edit({ embeds: [stickyEmbed] });
+        console.log(`📝 Updated existing sticky in #${channel.name} without reposting`);
+      }
+      stickyMessages.set(channel.id, keep);
+      return keep;
     }
+
+    // Discord cannot reposition an existing message by editing it. Only this
+    // explicit refresh path replaces it so the single reminder returns to bottom.
     let deleteFailed = false;
     for (const oldSticky of oldStickies) {
       try {
@@ -620,14 +645,11 @@ async function ensureSticky(channel, rule, refresh = true) {
         console.error(`❌ Could not remove old sticky in #${channel.name}:`, error.message);
       }
     }
-
-    // Never send a replacement if a previous sticky could not be deleted.
     if (deleteFailed) {
-      console.warn(`⚠️ Sticky creation skipped in #${channel.name} to prevent duplicates.`);
+      console.warn(`⚠️ Sticky refresh skipped in #${channel.name} to prevent duplicates.`);
       return null;
     }
 
-    const stickyEmbed = createStickyEmbed(rule);
     const newSticky = await channel.send({ embeds: [stickyEmbed] });
     stickyMessages.set(channel.id, newSticky);
     console.log(`💡 Single sticky refreshed in #${channel.name}`);
@@ -765,7 +787,7 @@ async function validateMessage(message, rule) {
 
   // Block replies where not allowed
   if (message.reference && !rule.allowReplies) {
-    return { allowed: false, serious: false, reason: "Replies are not allowed in this channel." };
+    return { allowed: false, serious: false, reason: "Replying to another member's post is not allowed in this channel." };
   }
 
   const hasMedia = images.length > 0 || videos.length > 0;
@@ -926,14 +948,27 @@ async function logRemovedMessage(message, reason, serious = false) {
   await sendModerationLog(embed);
 }
 
+async function sendPrivateRemovalNotice(message, reason) {
+  if (!message?.author || message.author.bot) return;
+  const channelName = message.channel?.name ? `#${message.channel.name}` : "that channel";
+  const notice = `Your message in ${channelName} was removed by the LAMPOON moderation system.\n**Reason:** ${String(reason || "No reason provided").slice(0, 900)}\n\nPlease review the channel rules before posting again.`;
+  try {
+    await message.author.send({ content: notice });
+  } catch (error) {
+    console.warn(`⚠️ Could not DM removal notice to ${message.author.tag || message.author.id}: ${error.message}`);
+  }
+}
+
 async function deleteOnly(message, reason) {
   await logRemovedMessage(message, reason, false);
+  await sendPrivateRemovalNotice(message, reason);
   await message.delete().catch(e => console.error("❌ Delete failed:", e.message));
   console.log(`🗑️ Deleted in #${message.channel.name}: ${reason}`);
 }
 
 async function deleteAndModerate(message, reason, serious) {
   await logRemovedMessage(message, reason, Boolean(serious));
+  await sendPrivateRemovalNotice(message, reason);
   await message.delete().catch(e => console.error("❌ Delete failed:", e.message));
   await message.reactions.removeAll().catch(err => console.log('⚠️ Could not remove reactions:', err.message));
   await registerViolation(message, reason, serious);
@@ -958,7 +993,7 @@ async function processMessage(message, rule) {
 
 async function refreshStickyAfterMessage(channel, rule) {
   await sleep(250);
-  await ensureSticky(channel, rule);
+  await ensureSticky(channel, rule, true);
 }
 
 // ============================================================
@@ -1115,7 +1150,7 @@ client.on("interactionCreate", async (interaction) => {
       if (interaction.channel.type === ChannelType.GuildForum || rule.type === "build") return interaction.reply({ content: "ℹ️ Forum channels use a dedicated guide post and do not have sticky reminders.", ephemeral: true });
       await interaction.deferReply({ ephemeral: true });
       stickyDisabledChannels.delete(interaction.channelId);
-      await ensureSticky(interaction.channel, rule);
+      await ensureSticky(interaction.channel, rule, true);
       return interaction.editReply("✅ Sticky refreshed.");
     }
 
