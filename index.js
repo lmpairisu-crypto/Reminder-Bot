@@ -493,8 +493,7 @@ function createStickyEmbed(rule) {
       `**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n` +
       `${introductions[rule.type] || rule.description}\n\n` +
       `**CHANNEL RULES**\n\n` +
-      `${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}\n\n` +
-      `${STICKY_MARKER}`
+      `${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`
     );
 
   // Preserve the original LAMPOON thumbnail.
