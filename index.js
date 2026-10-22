@@ -1005,19 +1005,17 @@ async function validateMessage(message, rule) {
 // ============================================================
 
 async function sendModerationLog(embed, memberId = null) {
-  // Private MOD LOG: staff-only channel configured with MOD_LOG_CHANNEL_ID.
+  // Private MOD LOG: staff-only guild text channel. Never DM members.
   if (!MOD_LOG_CHANNEL_ID) {
     console.warn("⚠️ MOD_LOG_CHANNEL_ID is not configured; private moderation log was not sent.");
     return;
   }
   try {
     const channel = await client.channels.fetch(MOD_LOG_CHANNEL_ID);
-    if (channel?.isTextBased()) {
-      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: memberId ? [memberId] : [] } };
-      if (memberId) payload.content = `<@${memberId}>`;
-      await channel.send(payload);
+    if (channel?.guild && channel.isTextBased() && !channel.isDMBased?.()) {
+      await channel.send({ embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [] } });
     } else {
-      console.error("❌ MOD LOG channel is missing or is not text-based.");
+      console.error("❌ MOD LOG destination must be a guild text channel; no DM was sent.");
     }
   } catch (e) { console.error("❌ MOD LOG send failed:", e.message); }
 }
@@ -1034,12 +1032,11 @@ async function sendReminderLog(embed, memberId = null) {
   }
   try {
     const channel = await client.channels.fetch(REMINDER_LOG_CHANNEL_ID);
-    if (channel?.isTextBased()) {
-      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: memberId ? [memberId] : [] } };
-      if (memberId) payload.content = `<@${memberId}>`;
-      await channel.send(payload);
+    if (channel?.guild && channel.isTextBased() && !channel.isDMBased?.()) {
+      // No member mention and no DM: notices are posted only in this server channel.
+      await channel.send({ embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [] } });
     } else {
-      console.error("❌ REMINDER LOG channel is missing or is not text-based.");
+      console.error("❌ REMINDER LOG destination must be a guild text channel; no DM was sent.");
     }
   } catch (e) { console.error("❌ REMINDER LOG send failed:", e.message); }
 }
@@ -1130,8 +1127,23 @@ function getRemovalLogDetails(message, reason, serious, actionTaken) {
   return { color, title, reasonText, why, requiredAction, actionTaken: actionTaken || "Message deleted." };
 }
 
+const loggedRemovalMessageIds = new Set();
+
 async function logRemovedMessage(message, reason, serious = false, actionTaken = "Message deleted.") {
   if (!message?.guild) return;
+  // Avoid duplicate log embeds if more than one handler reaches the same message.
+  if (message.id && loggedRemovalMessageIds.has(message.id)) {
+    console.warn(`⚠️ Duplicate removal log suppressed for message ${message.id}.`);
+    return;
+  }
+  if (message.id) {
+    loggedRemovalMessageIds.add(message.id);
+    // Bound memory usage for long-running hosts.
+    if (loggedRemovalMessageIds.size > 5000) {
+      const oldestId = loggedRemovalMessageIds.values().next().value;
+      loggedRemovalMessageIds.delete(oldestId);
+    }
+  }
   const content = String(message.content || "[No text content — message may contain attachments or embeds]").slice(0, 1000);
   const details = getRemovalLogDetails(message, reason, serious, actionTaken);
   const commonDescription = `**Member:** <@${message.author?.id}>\n**Channel:** <#${message.channel?.id}>`;
@@ -1165,8 +1177,8 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
     .setTimestamp();
 
   await Promise.all([
-    sendModerationLog(modEmbed, message.author?.id),
-    sendReminderLog(reminderEmbed, message.author?.id)
+    sendModerationLog(modEmbed),
+    sendReminderLog(reminderEmbed)
   ]);
 }
 
