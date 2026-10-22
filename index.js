@@ -691,9 +691,10 @@ async function ensureSticky(channel, rule, refresh = true) {
   if (stickyDisabledChannels.has(channel.id)) return null;
   const activeLock = stickyLocks.get(channel.id);
   if (activeLock) {
+    // Do not recursively queue refreshes for every message; the active refresh
+    // will leave one canonical sticky in this channel.
     await activeLock;
-    // A newer message may have arrived while the previous refresh was running.
-    return refresh ? ensureSticky(channel, rule, true) : (stickyMessages.get(channel.id) || null);
+    return stickyMessages.get(channel.id) || null;
   }
   let releaseLock;
   const lockPromise = new Promise(resolve => { releaseLock = resolve; });
@@ -705,18 +706,7 @@ async function ensureSticky(channel, rule, refresh = true) {
       console.warn(`⚠️ Sticky refresh aborted in #${channel.name}: could not verify existing reminders.`);
       return null;
     }
-    // On startup/reconnect, preserve one existing sticky only if it is already the
-    // newest message. Otherwise clean up all detected bot-managed stickies and post one
-    // replacement at the bottom. Duplicates are always removed below.
-    if (!refresh && oldStickies.length === 1) {
-      const existing = oldStickies[0];
-      const newest = await channel.messages.fetch({ limit: 1 }).catch(() => null);
-      const newestMessage = newest?.first?.() || null;
-      if (newestMessage?.id === existing.id) {
-        stickyMessages.set(channel.id, existing);
-        return existing;
-      }
-    }
+    // Always recreate the sticky so startup/reconnect also places it at the bottom.
     let deleteFailed = false;
     for (const oldSticky of oldStickies) {
       try {
@@ -734,14 +724,6 @@ async function ensureSticky(channel, rule, refresh = true) {
     // Never send a replacement if a previous sticky could not be deleted.
     if (deleteFailed) {
       console.warn(`⚠️ Sticky creation skipped in #${channel.name} to prevent duplicates.`);
-      return null;
-    }
-
-    // Verify cleanup before creating a new sticky. This prevents duplicate creation
-    // when Discord deletion has not completed or a legacy sticky was missed in cache.
-    const remainingStickies = await findExistingStickies(channel, 2000);
-    if (!Array.isArray(remainingStickies) || remainingStickies.length > 0) {
-      console.warn(`⚠️ Sticky creation skipped in #${channel.name}: ${Array.isArray(remainingStickies) ? remainingStickies.length + " sticky reminder(s) remain" : "verification failed"}.`);
       return null;
     }
 
@@ -1028,8 +1010,8 @@ async function sendModerationLog(embed, memberId = null) {
   try {
     const channel = await client.channels.fetch(MOD_LOG_CHANNEL_ID);
     if (channel?.isTextBased()) {
-      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: memberId ? [memberId] : [] } };
-      if (memberId) payload.content = `<@${memberId}>`;
+      // Reminder log is a channel post only: no member mention and no DM.
+      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: [] } };
       await channel.send(payload);
     } else {
       console.error("❌ MOD LOG channel is missing or is not text-based.");
@@ -1050,8 +1032,8 @@ async function sendReminderLog(embed, memberId = null) {
   try {
     const channel = await client.channels.fetch(REMINDER_LOG_CHANNEL_ID);
     if (channel?.isTextBased()) {
-      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: memberId ? [memberId] : [] } };
-      if (memberId) payload.content = `<@${memberId}>`;
+      // Reminder log is a channel post only: no member mention and no DM.
+      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: [] } };
       await channel.send(payload);
     } else {
       console.error("❌ REMINDER LOG channel is missing or is not text-based.");
@@ -1179,7 +1161,6 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
     )
     .setTimestamp();
 
-  // Log to channels only; never ping the member or send them a private notice.
   await Promise.all([
     sendModerationLog(modEmbed),
     sendReminderLog(reminderEmbed)
@@ -1259,11 +1240,12 @@ client.on("messageCreate", async (message) => {
     const rule = directRule || parentRule;
     if (!rule) return;
 
-    // Move/replace the sticky BEFORE spam checks, AI scanning, and moderation.
-    // This keeps it at the bottom while a post is being scanned, even if the
-    // post is later removed. ensureSticky serializes work per channel.
+    // Refresh in the background so sticky cleanup never blocks moderation or
+    // makes the channel feel frozen while image/AI checks are running.
     if (!(channel.isThread?.() && parentRule?.type === "build")) {
-      await refreshStickyAfterMessage(channel, rule);
+      void refreshStickyAfterMessage(channel, rule).catch(error =>
+        console.error(`❌ Background sticky refresh failed in #${channel.name}:`, error.message)
+      );
     }
 
     const spam = detectSpam(message);
