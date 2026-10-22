@@ -13,7 +13,6 @@ const {
   Routes,
   PermissionFlagsBits,
   ChannelType,
-  MessageFlags,
 } = require("discord.js");
 
 // ============================================================
@@ -24,7 +23,8 @@ const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || null;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
-const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || null;
+const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || null; // Private admin/staff moderation log
+const REMINDER_LOG_CHANNEL_ID = process.env.REMINDER_LOG_CHANNEL_ID || null; // Member-facing moderation explanations
 const LAMPOON_ICON_URL = process.env.LAMPOON_ICON_URL || null; // Embed thumbnail only; intentionally separate from footer icon.
 const LAMPOON_FOOTER_ICON_URL = process.env.LAMPOON_FOOTER_ICON_URL || "https://cdn.discordapp.com/attachments/1532817641490874491/1562134042248478750/Dofoto_20261021_000232084.png?ex=6ad98af2&is=6ad83972&hm=795eb8acb674ed9005ce69ff28781ebeb87aeaab98be3ab60217d4ae035cdcf8&";
 const MODERATION_TIMEOUT_MINUTES = 0;
@@ -37,9 +37,9 @@ const STICKY_MARKER = "\u2063LMP_REMINDER_STICKY\u2063";
 const AVISALA = "<a:Avisala:1542448826265243660>";
 
 function applyLampoonFooter(embed) {
-  const iconURL = LAMPOON_FOOTER_ICON_URL;
   const footer = { text: "LAMPOON • Moderation 🔨" };
-  if (iconURL) footer.iconURL = iconURL;
+  if (LAMPOON_FOOTER_ICON_URL) footer.iconURL = LAMPOON_FOOTER_ICON_URL;
+  // Do not add the sticky marker to moderation logs or other embeds.
   return embed.setFooter(footer);
 }
 
@@ -511,13 +511,9 @@ function createStickyEmbed(rule) {
   const embed = new EmbedBuilder()
     .setColor(GOLD)
     .setTitle("📢 READ REMINDER!")
-    .setDescription(`**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
+    .setDescription(`**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}\n\n${STICKY_MARKER}`);
   if (LAMPOON_ICON_URL) embed.setThumbnail(LAMPOON_ICON_URL);
-  applyLampoonFooter(embed);
-  // Keep the public footer clean; sticky detection uses the bot-authored reminder title.
-  const footer = { text: "LAMPOON • Moderation 🔨" };
-  if (LAMPOON_FOOTER_ICON_URL) footer.iconURL = LAMPOON_FOOTER_ICON_URL;
-  return embed.setFooter(footer);
+  return applyLampoonFooter(embed);
 }
 
 // ============================================================
@@ -553,15 +549,18 @@ function isStickyBotMessage(message) {
 
   // Current sticky title and legacy sticky titles from earlier deployments.
   const hasReminderTitle = embeds.some(embed =>
-    /^(?:📢\s*)?READ\s*REMINDER\s*!?$/i.test(String(embed.title || "").trim())
+    /READ\s*REMINDER/i.test(String(embed.title || "")) ||
+    /LAMPOON\s*STICKY/i.test(String(embed.title || ""))
   );
   if (hasReminderTitle) return true;
 
   // Protect other pinned messages, especially 📌 READ TOPIC ! channel rules.
   if (message.pinned) return false;
 
-  const legacyStickyPattern = /(?:READ\s*REMINDER|LAMPOON\s*STICKY|PROFILE\s*SHOWCASE|SKIN\s*SHOWCASE|HERO\s*HIGHLIGHTS?|HOK\s*MEMES?\s*SHARE|STANDPOST\s*MEME\s*SHARE|REDEMPTION\s*CODE\s*SHARE|HOK\s*FAN[- ]?ART|HOK\s*STRATEGY\s*FORUM)/i;
-  return legacyStickyPattern.test(embedText) && /CHANNEL RULES|LAMPOON|READ REMINDER/i.test(embedText);
+  // Legacy reminder embeds may have different titles/footers. Require both a
+  // recognizable channel-specific heading and the reminder's CHANNEL RULES block.
+  const legacyStickyPattern = /(?:PROFILE\s*SHOWCASE|SKIN\s*SHOWCASE|HERO\s*HIGHLIGHTS?|HOK\s*MEMES?\s*SHARE|STANDPOST\s*MEME\s*SHARE|REDEMPTION\s*CODE\s*SHARE|HOK\s*FAN[- ]?ART|HOK\s*STRATEGY\s*FORUM)/i;
+  return legacyStickyPattern.test(embedText) && /CHANNEL RULES/i.test(embedText);
 }
 
 async function fetchRecentMessages(channel, maxMessages = 200) {
@@ -701,7 +700,7 @@ async function ensureSticky(channel, rule, refresh = true) {
   stickyLocks.set(channel.id, lockPromise);
 
   try {
-    const oldStickies = await findExistingStickies(channel, refresh ? 200 : 2000);
+    const oldStickies = await findExistingStickies(channel, 2000);
     if (!Array.isArray(oldStickies)) {
       console.warn(`⚠️ Sticky refresh aborted in #${channel.name}: could not verify existing reminders.`);
       return null;
@@ -768,8 +767,9 @@ async function askGeminiImage(imageUrl, channelType) {
     const imageBytes = await imageResponse.arrayBuffer();
     if (imageBytes.byteLength > MAX_IMAGE_BYTES) return { ...unavailable, reason: "Image exceeds scan size limit; media retained." };
     const base64Image = Buffer.from(imageBytes).toString("base64");
+    const imagePrompt = `${IMAGE_PROMPTS[channelType] || IMAGE_PROMPTS["general-meme"]}\n\nGLOBAL SERIOUS-VIOLATION OVERRIDE: If the image clearly contains NSFW/explicit sexual material or prohibited sexualized content, classify it as status "rejected", serious true, and give a concise reason such as "NSFW or prohibited sexualized content". This override applies in every channel, even if the image otherwise matches the channel topic. Do not guess from ambiguous or non-sexual images. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":true|false,"reason":"short explanation"}`;
     const result = await model.generateContent([
-      IMAGE_PROMPTS[channelType] || IMAGE_PROMPTS["general-meme"],
+      imagePrompt,
       { inlineData: { data: base64Image, mimeType } },
     ]);
     const match = result.response.text().match(/\{[\s\S]*\}/);
@@ -1004,12 +1004,44 @@ async function validateMessage(message, rule) {
 // MODERATION — SIMPLIFIED: ONLY SERIOUS = ACTION
 // ============================================================
 
-async function sendModerationLog(embed) {
-  if (!MOD_LOG_CHANNEL_ID) return;
+async function sendModerationLog(embed, memberId = null) {
+  // Private MOD LOG: staff-only channel configured with MOD_LOG_CHANNEL_ID.
+  if (!MOD_LOG_CHANNEL_ID) {
+    console.warn("⚠️ MOD_LOG_CHANNEL_ID is not configured; private moderation log was not sent.");
+    return;
+  }
   try {
     const channel = await client.channels.fetch(MOD_LOG_CHANNEL_ID);
-    if (channel?.isTextBased()) await channel.send({ embeds: [applyLampoonFooter(embed)] });
-  } catch (e) { console.error("❌ Log failed:", e.message); }
+    if (channel?.isTextBased()) {
+      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: memberId ? [memberId] : [] } };
+      if (memberId) payload.content = `<@${memberId}>`;
+      await channel.send(payload);
+    } else {
+      console.error("❌ MOD LOG channel is missing or is not text-based.");
+    }
+  } catch (e) { console.error("❌ MOD LOG send failed:", e.message); }
+}
+
+async function sendReminderLog(embed, memberId = null) {
+  // Public/member-facing REMINDER LOG: separate from the private staff MOD LOG.
+  if (!REMINDER_LOG_CHANNEL_ID) {
+    console.warn("⚠️ REMINDER_LOG_CHANNEL_ID is not configured; member-facing reminder log was not sent.");
+    return;
+  }
+  if (REMINDER_LOG_CHANNEL_ID === MOD_LOG_CHANNEL_ID) {
+    console.error("❌ REMINDER_LOG_CHANNEL_ID must be different from MOD_LOG_CHANNEL_ID.");
+    return;
+  }
+  try {
+    const channel = await client.channels.fetch(REMINDER_LOG_CHANNEL_ID);
+    if (channel?.isTextBased()) {
+      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: memberId ? [memberId] : [] } };
+      if (memberId) payload.content = `<@${memberId}>`;
+      await channel.send(payload);
+    } else {
+      console.error("❌ REMINDER LOG channel is missing or is not text-based.");
+    }
+  } catch (e) { console.error("❌ REMINDER LOG send failed:", e.message); }
 }
 
 async function timeoutMember(member, minutes, reason) {
@@ -1029,10 +1061,6 @@ async function timeoutMember(member, minutes, reason) {
       return { ok: false, reason: "Target member's highest role is equal to or above the bot's highest role." };
     }
     await member.timeout(minutes * 60 * 1000, reason);
-    await sendModerationLog(
-      new EmbedBuilder().setColor("#FF9900").setTitle("⏱️ MEMBER TIMEOUT")
-        .setDescription(`**Member:** ${member}\n**Duration:** ${minutes} min\n**Reason:** ${reason}`).setTimestamp()
-    );
     console.log(`⏱️ Timeout applied: ${member.user.tag} for ${minutes} minute(s).`);
     return { ok: true, reason: `Timed out ${minutes} min.` };
   } catch (e) {
@@ -1042,19 +1070,18 @@ async function timeoutMember(member, minutes, reason) {
 }
 
 async function registerViolation(message, reason, serious = false, isSpam = false) {
-  if (!message.guild) return;
-  
-  // Only count/action for SERIOUS violations
+  if (!message.guild) return { count: null, action: "Message deleted; no guild context." };
+
   if (!serious) {
     console.log(`🗑️ Ordinary content removal | user=${message.author.tag} (${message.author.id}) | channel=#${message.channel.name} (${message.channel.id}) | reason=${reason}`);
-    return; // Ordinary mistakes are deleted only; no moderation-channel log or timeout.
+    return { count: null, action: "Message deleted. No timeout applied for an ordinary content correction." };
   }
 
   const key = `${message.guild.id}:${message.author.id}`;
   const count = (violationCounts.get(key) || 0) + 1;
   violationCounts.set(key, count);
 
-  let action = "Removed.";
+  let action = "Message deleted.";
   const member = await message.guild.members.fetch(message.author.id).catch(() => null);
   const channelRule = CHANNEL_RULES[message.channel.id] || CHANNEL_RULES[message.channel.parentId];
   const isTimeoutExemptChannel = channelRule?.type === "code" || channelRule?.type === "build";
@@ -1062,46 +1089,95 @@ async function registerViolation(message, reason, serious = false, isSpam = fals
     ? (isTimeoutExemptChannel ? 0 : SPAM_TIMEOUT_MINUTES)
     : SERIOUS_VIOLATION_TIMEOUT_MINUTES;
   if (isSpam && isTimeoutExemptChannel) {
-    action = "Timeout skipped (Code Share/Forum exemption).";
+    action = "Message deleted. Timeout skipped (Code Share/Forum exemption).";
   } else if (timeoutMinutes > 0) {
     const timeoutResult = await timeoutMember(member, timeoutMinutes, reason);
     action = timeoutResult.ok
-      ? timeoutResult.reason
-      : `TIMEOUT NOT APPLIED: ${timeoutResult.reason}`;
+      ? `Message deleted. ${timeoutResult.reason}`
+      : `Message deleted. TIMEOUT NOT APPLIED: ${timeoutResult.reason}`;
   }
-
-  await sendModerationLog(
-    new EmbedBuilder().setColor("#FF4444").setTitle("🚫 SERIOUS VIOLATION")
-      .setDescription(`**Member:** ${message.author}\n**Channel:** ${message.channel}\n**Reason:** ${reason}\n**Count:** ${count}\n**Action:** ${action}`).setTimestamp()
-  );
+  return { count, action };
 }
 
-async function logRemovedMessage(message, reason, serious = false) {
+function getRemovalLogDetails(message, reason, serious, actionTaken) {
+  const reasonText = String(reason || "No reason provided").trim();
+  const hasMedia = Boolean(message.attachments?.size) || /\b(image|screenshot|video|gif|media|skin showcase|profile showcase|fan.?art|meme image)\b/i.test(reasonText);
+  const color = serious ? "#FF3030" : (hasMedia ? "#FF8C00" : "#FFD700");
+  const title = serious ? "🔴 SERIOUS VIOLATION" : (hasMedia ? "🟠 MEDIA SUBMISSION REMOVED" : "🟡 CONTENT CORRECTION REQUIRED");
+  let why;
+  let requiredAction;
+
+  if (serious && /nsfw|sexual|porn|nude|explicit/i.test(reasonText)) {
+    why = `The moderation check identified the submission as NSFW or prohibited sexualized content. It was removed under the server's serious content-safety rules. Detected reason: ${reasonText}`;
+    requiredAction = "Do not repost the prohibited content. Review the server's content-safety rules; contact a moderator if you believe the detection was mistaken.";
+  } else if (serious && /spam|messages within|repeated/i.test(reasonText)) {
+    why = `The message triggered the configured serious-spam or repeated-violation rule. Detected reason: ${reasonText}`;
+    requiredAction = "Stop repeated posting and send one message at a time. Follow the channel rules and any moderator instructions.";
+  } else if (serious) {
+    why = `The moderation check flagged this action as a serious rule violation. Detected reason: ${reasonText}`;
+    requiredAction = "Do not repeat the prohibited behavior. Review the applicable server rule and contact a moderator if you need clarification.";
+  } else if (hasMedia) {
+    why = `The submitted media did not pass this channel's configured content or format checks. Detected reason: ${reasonText}`;
+    requiredAction = "Review the channel topic and submit media that matches its requirements. If the removal appears incorrect, ask a moderator to review it.";
+  } else if (/comment|reply|emoji|text-only|plain text|chat|unrelated|post too short|no code found|empty message/i.test(reasonText)) {
+    why = `The message or reply did not meet this channel's configured submission rules. Detected reason: ${reasonText}`;
+    requiredAction = "Read the channel topic and send a corrected, relevant message in the required format. For Code Share, use only an allowed code-status or appreciation reply when replying to a code post.";
+  } else {
+    why = `The message did not pass this channel's configured validation. Detected reason: ${reasonText}`;
+    requiredAction = "Review the channel topic and resubmit content that meets its requirements. Contact a moderator if you believe this was a mistake.";
+  }
+
+  return { color, title, reasonText, why, requiredAction, actionTaken: actionTaken || "Message deleted." };
+}
+
+async function logRemovedMessage(message, reason, serious = false, actionTaken = "Message deleted.") {
   if (!message?.guild) return;
-  const content = String(message.content || "[No text content — message may contain attachments or embeds]").slice(0, 3500);
-  const embed = new EmbedBuilder()
-    .setColor(serious ? "#FF4444" : "#D4AF37")
-    .setTitle("🗑️ MESSAGE REMOVED")
-    .setDescription("A message was removed by the Lampoon moderation system.")
+  const content = String(message.content || "[No text content — message may contain attachments or embeds]").slice(0, 1000);
+  const details = getRemovalLogDetails(message, reason, serious, actionTaken);
+  const commonDescription = `**Member:** <@${message.author?.id}>\n**Channel:** <#${message.channel?.id}>`;
+
+  // PRIVATE MOD LOG EMBED: preserve the full audit trail for admins/staff.
+  const modEmbed = new EmbedBuilder()
+    .setColor(details.color)
+    .setTitle(details.title)
+    .setDescription(commonDescription)
     .addFields(
-      { name: "👤 User", value: `${message.author?.tag || message.author?.username || "Unknown user"}\n\`${message.author?.id || "Unknown ID"}\``, inline: false },
-      { name: "📍 Channel", value: `${message.channel || "Unknown channel"}\n\`${message.channel?.id || "Unknown ID"}\``, inline: false },
-      { name: "📋 Reason", value: String(reason || "No reason provided").slice(0, 1024), inline: false },
-      { name: "💬 Message", value: content || "[Empty message]", inline: false },
-      { name: "🔗 Message ID", value: `\`${message.id || "Unknown ID"}\``, inline: false },
-      { name: "🚨 Serious", value: serious ? "Yes" : "No", inline: false }
+      { name: "📋 Reason", value: details.reasonText.slice(0, 1024), inline: false },
+      { name: "❓ Why was it removed?", value: details.why.slice(0, 1024), inline: false },
+      { name: "🛠️ Required action", value: details.requiredAction.slice(0, 1024), inline: false },
+      { name: "⚖️ Moderation action", value: String(details.actionTaken).slice(0, 1024), inline: false },
+      { name: "💬 Submitted content", value: content || "[Empty message]", inline: false },
+      { name: "🔗 Message ID", value: `\`${message.id || "Unknown ID"}\``, inline: false }
     )
     .setTimestamp();
-  await sendModerationLog(embed);
+
+  // PUBLIC REMINDER LOG EMBED: member-facing explanation; omit raw submitted content and message ID.
+  const reminderEmbed = new EmbedBuilder()
+    .setColor(details.color)
+    .setTitle(details.title)
+    .setDescription(commonDescription)
+    .addFields(
+      { name: "📋 Reason", value: details.reasonText.slice(0, 1024), inline: false },
+      { name: "❓ Why was it removed?", value: details.why.slice(0, 1024), inline: false },
+      { name: "🛠️ Required action", value: details.requiredAction.slice(0, 1024), inline: false },
+      { name: "⚖️ Moderation action", value: String(details.actionTaken).slice(0, 1024), inline: false }
+    )
+    .setTimestamp();
+
+  await Promise.all([
+    sendModerationLog(modEmbed, message.author?.id),
+    sendReminderLog(reminderEmbed, message.author?.id)
+  ]);
 }
 
 async function deleteOnly(message, reason) {
   await message.delete().catch(error =>
     console.error("❌ Delete failed:", error.message)
   );
-  await logRemovedMessage(message, reason, false);
+  await logRemovedMessage(message, reason, false, "Message deleted. No timeout applied.");
   console.log(`🗑️ Deleted in #${message.channel.name}: ${reason}`);
 }
+
 
 function detectSpam(message) {
   const now = Date.now();
@@ -1123,10 +1199,13 @@ function detectSpam(message) {
 }
 
 async function deleteAndModerate(message, reason, serious) {
-  await logRemovedMessage(message, reason, Boolean(serious));
   await message.delete().catch(e => console.error("❌ Delete failed:", e.message));
   await message.reactions.removeAll().catch(err => console.log('⚠️ Could not remove reactions:', err.message));
-  await registerViolation(message, reason, serious);
+  const violation = await registerViolation(message, reason, serious, false);
+  const action = violation?.count
+    ? `${violation.action} Violation count: ${violation.count}.`
+    : (violation?.action || "Message deleted.");
+  await logRemovedMessage(message, reason, Boolean(serious), action);
 }
 
 async function processMessage(message, rule) {
@@ -1147,8 +1226,8 @@ async function processMessage(message, rule) {
 // Only new messages are moderated after the bot starts.
 
 async function refreshStickyAfterMessage(channel, rule) {
-  await sleep(250);
-  await ensureSticky(channel, rule);
+  // No delay: await completion before the message enters spam/AI moderation.
+  await ensureSticky(channel, rule, true);
 }
 
 // ============================================================
@@ -1175,8 +1254,11 @@ client.on("messageCreate", async (message) => {
     if (spam.spam) {
       await message.delete().catch(e => console.error("❌ Spam message delete failed:", e.message));
       if (!spam.alreadyReported) {
-        await logRemovedMessage(message, spam.reason, true);
-        await registerViolation(message, spam.reason, true, true);
+        const violation = await registerViolation(message, spam.reason, true, true);
+        const action = violation?.count
+          ? `${violation.action} Violation count: ${violation.count}.`
+          : (violation?.action || "Message deleted.");
+        await logRemovedMessage(message, spam.reason, true, action);
       } else {
         console.log(`🧹 Removed follow-up spam from ${message.author.tag} in #${channel.name} (already reported this burst).`);
       }
@@ -1185,6 +1267,7 @@ client.on("messageCreate", async (message) => {
 
     const processed = await processMessage(message, rule);
 
+    // Code Share: preserve the existing helpful replies, but never send warnings or DMs.
     if (processed.action === "allowed" && rule.type === "code" && message.reference) {
       if (isAppreciationReply(message.content)) {
         await message.reply({ content: "You're welcome! Happy to help!" }).catch(() => {});
@@ -1325,23 +1408,23 @@ client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
   try {
     if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageMessages)) {
-      return interaction.reply({ content: "❌ Need Manage Messages permission.", flags: MessageFlags.Ephemeral });
+      return interaction.reply({ content: "❌ Need Manage Messages permission." });
     }
 
     const rule = CHANNEL_RULES[interaction.channelId];
 
     if (interaction.commandName === "sticky-refresh") {
-      if (!rule) return interaction.reply({ content: "❌ No rule for this channel.", flags: MessageFlags.Ephemeral });
-      if (interaction.channel.type === ChannelType.GuildForum || rule.type === "build") return interaction.reply({ content: "ℹ️ Forum channels use a dedicated guide post and do not have sticky reminders.", flags: MessageFlags.Ephemeral });
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      if (!rule) return interaction.reply({ content: "❌ No rule for this channel." });
+      if (interaction.channel.type === ChannelType.GuildForum || rule.type === "build") return interaction.reply({ content: "ℹ️ Forum channels use a dedicated guide post and do not have sticky reminders." });
+      await interaction.deferReply();
       stickyDisabledChannels.delete(interaction.channelId);
       await ensureSticky(interaction.channel, rule);
       return interaction.editReply("✅ Sticky refreshed.");
     }
 
     if (interaction.commandName === "sticky-setup") {
-      if (!rule) return interaction.reply({ content: "❌ No rule for this channel.", flags: MessageFlags.Ephemeral });
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      if (!rule) return interaction.reply({ content: "❌ No rule for this channel." });
+      await interaction.deferReply();
       if (interaction.channel.type === ChannelType.GuildForum) {
         await initializeForumChannel(interaction.channel, rule);
       } else {
@@ -1353,7 +1436,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     if (interaction.commandName === "sticky-cleanup") {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await interaction.deferReply();
       // Disable creation first, then wait for an in-flight refresh to finish before scanning.
       stickyDisabledChannels.add(interaction.channelId);
       const activeLock = stickyLocks.get(interaction.channelId);
@@ -1388,7 +1471,7 @@ client.on("interactionCreate", async (interaction) => {
                          r.type === "build" ? " — HOK chat OK" : "";
         return `• ${PINNED_TITLES[r.type] || r.name}${modeNote} — <#${id}>`;
       }).join("\n");
-      return interaction.reply({ embeds: [applyLampoonFooter(new EmbedBuilder().setColor(GOLD).setTitle(`${AVISALA} CONFIGURED`).setDescription(list).setTimestamp())], flags: MessageFlags.Ephemeral });
+      return interaction.reply({ embeds: [applyLampoonFooter(new EmbedBuilder().setColor(GOLD).setTitle(`${AVISALA} CONFIGURED`).setDescription(list).setTimestamp())] });
     }
 
 
@@ -1396,7 +1479,7 @@ client.on("interactionCreate", async (interaction) => {
     console.error("❌ Interaction error:", e);
     const msg = "❌ Something went wrong.";
     if (interaction.deferred || interaction.replied) await interaction.editReply(msg).catch(() => {});
-    else await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral }).catch(() => {});
+    else await interaction.reply({ content: msg }).catch(() => {});
   }
 });
 
