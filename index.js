@@ -705,10 +705,17 @@ async function ensureSticky(channel, rule, refresh = true) {
       console.warn(`⚠️ Sticky refresh aborted in #${channel.name}: could not verify existing reminders.`);
       return null;
     }
-    // Startup/reconnect scans preserve a single existing sticky; normal refreshes move it down.
+    // On startup/reconnect, preserve one existing sticky only if it is already the
+    // newest message. Otherwise clean up all detected bot-managed stickies and post one
+    // replacement at the bottom. Duplicates are always removed below.
     if (!refresh && oldStickies.length === 1) {
-      stickyMessages.set(channel.id, oldStickies[0]);
-      return oldStickies[0];
+      const existing = oldStickies[0];
+      const newest = await channel.messages.fetch({ limit: 1 }).catch(() => null);
+      const newestMessage = newest?.first?.() || null;
+      if (newestMessage?.id === existing.id) {
+        stickyMessages.set(channel.id, existing);
+        return existing;
+      }
     }
     let deleteFailed = false;
     for (const oldSticky of oldStickies) {
@@ -727,6 +734,14 @@ async function ensureSticky(channel, rule, refresh = true) {
     // Never send a replacement if a previous sticky could not be deleted.
     if (deleteFailed) {
       console.warn(`⚠️ Sticky creation skipped in #${channel.name} to prevent duplicates.`);
+      return null;
+    }
+
+    // Verify cleanup before creating a new sticky. This prevents duplicate creation
+    // when Discord deletion has not completed or a legacy sticky was missed in cache.
+    const remainingStickies = await findExistingStickies(channel, 2000);
+    if (!Array.isArray(remainingStickies) || remainingStickies.length > 0) {
+      console.warn(`⚠️ Sticky creation skipped in #${channel.name}: ${Array.isArray(remainingStickies) ? remainingStickies.length + " sticky reminder(s) remain" : "verification failed"}.`);
       return null;
     }
 
@@ -1005,17 +1020,19 @@ async function validateMessage(message, rule) {
 // ============================================================
 
 async function sendModerationLog(embed, memberId = null) {
-  // Private MOD LOG: staff-only guild text channel. Never DM members.
+  // Private MOD LOG: staff-only channel configured with MOD_LOG_CHANNEL_ID.
   if (!MOD_LOG_CHANNEL_ID) {
     console.warn("⚠️ MOD_LOG_CHANNEL_ID is not configured; private moderation log was not sent.");
     return;
   }
   try {
     const channel = await client.channels.fetch(MOD_LOG_CHANNEL_ID);
-    if (channel?.guild && channel.isTextBased() && !channel.isDMBased?.()) {
-      await channel.send({ embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [] } });
+    if (channel?.isTextBased()) {
+      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: memberId ? [memberId] : [] } };
+      if (memberId) payload.content = `<@${memberId}>`;
+      await channel.send(payload);
     } else {
-      console.error("❌ MOD LOG destination must be a guild text channel; no DM was sent.");
+      console.error("❌ MOD LOG channel is missing or is not text-based.");
     }
   } catch (e) { console.error("❌ MOD LOG send failed:", e.message); }
 }
@@ -1032,11 +1049,12 @@ async function sendReminderLog(embed, memberId = null) {
   }
   try {
     const channel = await client.channels.fetch(REMINDER_LOG_CHANNEL_ID);
-    if (channel?.guild && channel.isTextBased() && !channel.isDMBased?.()) {
-      // No member mention and no DM: notices are posted only in this server channel.
-      await channel.send({ embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [] } });
+    if (channel?.isTextBased()) {
+      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: memberId ? [memberId] : [] } };
+      if (memberId) payload.content = `<@${memberId}>`;
+      await channel.send(payload);
     } else {
-      console.error("❌ REMINDER LOG destination must be a guild text channel; no DM was sent.");
+      console.error("❌ REMINDER LOG channel is missing or is not text-based.");
     }
   } catch (e) { console.error("❌ REMINDER LOG send failed:", e.message); }
 }
@@ -1127,23 +1145,8 @@ function getRemovalLogDetails(message, reason, serious, actionTaken) {
   return { color, title, reasonText, why, requiredAction, actionTaken: actionTaken || "Message deleted." };
 }
 
-const loggedRemovalMessageIds = new Set();
-
 async function logRemovedMessage(message, reason, serious = false, actionTaken = "Message deleted.") {
   if (!message?.guild) return;
-  // Avoid duplicate log embeds if more than one handler reaches the same message.
-  if (message.id && loggedRemovalMessageIds.has(message.id)) {
-    console.warn(`⚠️ Duplicate removal log suppressed for message ${message.id}.`);
-    return;
-  }
-  if (message.id) {
-    loggedRemovalMessageIds.add(message.id);
-    // Bound memory usage for long-running hosts.
-    if (loggedRemovalMessageIds.size > 5000) {
-      const oldestId = loggedRemovalMessageIds.values().next().value;
-      loggedRemovalMessageIds.delete(oldestId);
-    }
-  }
   const content = String(message.content || "[No text content — message may contain attachments or embeds]").slice(0, 1000);
   const details = getRemovalLogDetails(message, reason, serious, actionTaken);
   const commonDescription = `**Member:** <@${message.author?.id}>\n**Channel:** <#${message.channel?.id}>`;
@@ -1176,6 +1179,7 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
     )
     .setTimestamp();
 
+  // Log to channels only; never ping the member or send them a private notice.
   await Promise.all([
     sendModerationLog(modEmbed),
     sendReminderLog(reminderEmbed)
