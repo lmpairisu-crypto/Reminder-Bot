@@ -610,7 +610,28 @@ async function findExistingPinned(channel) {
 
 async function findExistingStickies(channel) {
   try {
-    return (await fetchRecentMessages(channel, 2000)).filter(isStickyBotMessage);
+    // Merge recent history with pinned messages so an older pinned sticky is not missed.
+    const found = new Map();
+    for (const message of await fetchRecentMessages(channel, 2000)) {
+      if (isStickyBotMessage(message)) found.set(message.id, message);
+    }
+    let pinned = null;
+    if (typeof channel.messages.fetchPins === "function") {
+      pinned = await channel.messages.fetchPins().catch(() => null);
+    } else if (typeof channel.messages.fetchPinned === "function") {
+      pinned = await channel.messages.fetchPinned().catch(() => null);
+    }
+    const pinnedMessages = Array.isArray(pinned)
+      ? pinned
+      : (pinned && typeof pinned.values === "function"
+          ? [...pinned.values()]
+          : pinned?.messages && typeof pinned.messages.values === "function"
+            ? [...pinned.messages.values()]
+            : Array.isArray(pinned?.messages) ? pinned.messages : []);
+    for (const message of pinnedMessages) {
+      if (isStickyBotMessage(message)) found.set(message.id, message);
+    }
+    return [...found.values()].sort((a, b) => b.createdTimestamp - a.createdTimestamp);
   } catch (error) {
     console.error(`❌ Sticky search failed in #${channel.name}:`, error.message);
     return [];
@@ -649,6 +670,8 @@ async function ensurePinned(channel, rule) {
 }
 
 async function ensureSticky(channel, rule, refresh = true) {
+  // A thread inherits its parent's rule, but must not get its own duplicate sticky.
+  if (channel?.isThread?.()) return null;
   if (!channel?.isTextBased() || channel.type === ChannelType.GuildForum || rule.type === "build") return null;
   if (stickyDisabledChannels.has(channel.id)) return null;
   const activeLock = stickyLocks.get(channel.id);
@@ -1121,9 +1144,7 @@ client.on("messageCreate", async (message) => {
     const rule = directRule || parentRule;
     if (!rule) return;
 
-    // Move the single sticky down before any scan or deletion, including spam handling.
-    // The cooldown prevents excessive reposting; duplicate cleanup keeps one sticky per channel.
-    await ensureSticky(channel, rule, true);
+    // Sticky refresh happens only after an accepted post, avoiding duplicate refresh cycles.
 
     // Repeated rapid messages are treated as a serious violation, not as ordinary mistakes.
     const spam = detectSpam(message);
@@ -1325,8 +1346,14 @@ client.on("interactionCreate", async (interaction) => {
       let removed = 0;
       let failed = 0;
       for (const old of oldStickies) {
-        try { await old.delete(); removed++; }
-        catch (error) { failed++; console.error(`❌ Could not remove sticky ${old.id}:`, error.message); }
+        try {
+          if (old.pinned) await old.unpin("Remove duplicate LAMPOON sticky reminder");
+          await old.delete();
+          removed++;
+        } catch (error) {
+          failed++;
+          console.error(`❌ Could not remove sticky ${old.id}:`, error.message);
+        }
       }
       if (failed) return interaction.editReply(`⚠️ Removed ${removed} sticky reminder(s), but ${failed} could not be deleted. Check the bot's Manage Messages permission and server logs.`);
       return interaction.editReply(removed
