@@ -307,7 +307,6 @@ const activeSpamPenaltyUntil = new Map();
 const SPAM_WINDOW_MS = 10_000;
 const SPAM_MESSAGE_THRESHOLD = 5;
 const SPAM_PENALTY_COOLDOWN_MS = 60_000;
-const STICKY_REFRESH_COOLDOWN_MS = 3_000;
 
 // ============================================================
 // MEDIA HELPERS
@@ -537,25 +536,32 @@ function isStickyBotMessage(message) {
   );
   if (!isBotAuthored) return false;
 
+  // Never classify the dedicated pinned rules embed as a sticky reminder.
+  if (isPinnedMessage(message)) return false;
+
   const embeds = message.embeds || [];
   const content = message.content || "";
+  const embedText = embeds
+    .map(embed => `${embed.title || ""}\n${embed.description || ""}\n${embed.footer?.text || ""}`)
+    .join("\n");
+
   const hasMarker = embeds.some(embed =>
     (embed.footer?.text || "").includes(STICKY_MARKER) ||
     (embed.description || "").includes(STICKY_MARKER)
   ) || content.includes(STICKY_MARKER);
   if (hasMarker) return true;
 
+  // Current sticky title and legacy sticky titles from earlier deployments.
   const hasReminderTitle = embeds.some(embed =>
     /^(?:📢\s*)?READ\s*REMINDER\s*!?$/i.test(String(embed.title || "").trim())
   );
   if (hasReminderTitle) return true;
 
-  // Pinned non-sticky messages, including 📌 READ TOPIC ! rules, are protected.
+  // Protect other pinned messages, especially 📌 READ TOPIC ! channel rules.
   if (message.pinned) return false;
 
-  const embedText = embeds.map(embed => `${embed.title || ""}\n${embed.description || ""}`).join("\n");
-  const legacyTitles = /(?:CHANNEL\s*TOPICS|LAMPOON\s*STICKY|PROFILE\s*SHOWCASE|SKIN\s*SHOWCASE|HERO\s*HIGHLIGHTS?|HOK\s*MEMES?\s*SHARE|STANDPOST\s*MEME\s*SHARE|REDEMPTION\s*CODE\s*SHARE|HOK\s*FAN[- ]?ART|HOK\s*STRATEGY\s*FORUM)/i;
-  return legacyTitles.test(embedText) && /CHANNEL RULES|READ REMINDER|LAMPOON/i.test(embedText);
+  const legacyStickyPattern = /(?:READ\s*REMINDER|LAMPOON\s*STICKY|PROFILE\s*SHOWCASE|SKIN\s*SHOWCASE|HERO\s*HIGHLIGHTS?|HOK\s*MEMES?\s*SHARE|STANDPOST\s*MEME\s*SHARE|REDEMPTION\s*CODE\s*SHARE|HOK\s*FAN[- ]?ART|HOK\s*STRATEGY\s*FORUM)/i;
+  return legacyStickyPattern.test(embedText) && /CHANNEL RULES|LAMPOON|READ REMINDER/i.test(embedText);
 }
 
 async function fetchRecentMessages(channel, maxMessages = 200) {
@@ -608,12 +614,19 @@ async function findExistingPinned(channel) {
   }
 }
 
-async function findExistingStickies(channel) {
+async function findExistingStickies(channel, maxMessages = 2000) {
   try {
     // Merge recent history with pinned messages so an older pinned sticky is not missed.
     const found = new Map();
-    for (const message of await fetchRecentMessages(channel, 2000)) {
+    for (const message of await fetchRecentMessages(channel, maxMessages)) {
       if (isStickyBotMessage(message)) found.set(message.id, message);
+    }
+    // Keep track of the sticky created by this process even if Discord history
+    // has not surfaced it yet or it has fallen outside the recent-message scan.
+    const cachedSticky = stickyMessages.get(channel.id);
+    if (cachedSticky?.id && !found.has(cachedSticky.id)) {
+      const fetchedCached = await channel.messages.fetch(cachedSticky.id).catch(() => null);
+      if (fetchedCached && isStickyBotMessage(fetchedCached)) found.set(fetchedCached.id, fetchedCached);
     }
     let pinned = null;
     if (typeof channel.messages.fetchPins === "function") {
@@ -634,7 +647,10 @@ async function findExistingStickies(channel) {
     return [...found.values()].sort((a, b) => b.createdTimestamp - a.createdTimestamp);
   } catch (error) {
     console.error(`❌ Sticky search failed in #${channel.name}:`, error.message);
-    return [];
+    // IMPORTANT: null means the scan failed. An empty array means the scan
+    // succeeded and no stickies were found. Never create a replacement after
+    // a failed scan, or a temporary Discord API error can create duplicates.
+    return null;
   }
 }
 
@@ -685,7 +701,11 @@ async function ensureSticky(channel, rule, refresh = true) {
   stickyLocks.set(channel.id, lockPromise);
 
   try {
-    const oldStickies = await findExistingStickies(channel);
+    const oldStickies = await findExistingStickies(channel, refresh ? 200 : 2000);
+    if (!Array.isArray(oldStickies)) {
+      console.warn(`⚠️ Sticky refresh aborted in #${channel.name}: could not verify existing reminders.`);
+      return null;
+    }
     // Startup/reconnect scans preserve a single existing sticky; normal refreshes move it down.
     if (!refresh && oldStickies.length === 1) {
       stickyMessages.set(channel.id, oldStickies[0]);
@@ -1144,9 +1164,13 @@ client.on("messageCreate", async (message) => {
     const rule = directRule || parentRule;
     if (!rule) return;
 
-    // Sticky refresh happens only after an accepted post, avoiding duplicate refresh cycles.
+    // Move/replace the sticky BEFORE spam checks, AI scanning, and moderation.
+    // This keeps it at the bottom while a post is being scanned, even if the
+    // post is later removed. ensureSticky serializes work per channel.
+    if (!(channel.isThread?.() && parentRule?.type === "build")) {
+      await refreshStickyAfterMessage(channel, rule);
+    }
 
-    // Repeated rapid messages are treated as a serious violation, not as ordinary mistakes.
     const spam = detectSpam(message);
     if (spam.spam) {
       await message.delete().catch(e => console.error("❌ Spam message delete failed:", e.message));
@@ -1156,11 +1180,9 @@ client.on("messageCreate", async (message) => {
       } else {
         console.log(`🧹 Removed follow-up spam from ${message.author.tag} in #${channel.name} (already reported this burst).`);
       }
-      // Do not refresh/repost the sticky for deleted spam messages.
       return;
     }
 
-    // The sticky has already been moved down before validation/scanning/removal.
     const processed = await processMessage(message, rule);
 
     if (processed.action === "allowed" && rule.type === "code" && message.reference) {
@@ -1170,10 +1192,6 @@ client.on("messageCreate", async (message) => {
         await message.reply({ content: "Thank you! Your response has been noted." }).catch(() => {});
       }
     }
-
-    if (channel.isThread?.() && parentRule?.type === "build") return;
-    // Deleted/rejected posts do not need to move the sticky. Only accepted posts refresh it.
-    if (processed.action === "allowed") await refreshStickyAfterMessage(channel, rule);
   } catch (e) { console.error("❌ messageCreate error:", e); }
 });
 
@@ -1343,6 +1361,9 @@ client.on("interactionCreate", async (interaction) => {
       stickyMessages.delete(interaction.channelId);
       stickyLastRefreshAt.delete(interaction.channelId);
       const oldStickies = await findExistingStickies(interaction.channel);
+      if (!Array.isArray(oldStickies)) {
+        return interaction.editReply("⚠️ Sticky scan failed, so cleanup stopped without creating or deleting reminders. Check Manage Messages / Read Message History permissions and try again.");
+      }
       let removed = 0;
       let failed = 0;
       for (const old of oldStickies) {
