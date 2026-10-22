@@ -44,9 +44,29 @@ function applyLampoonFooter(embed) {
 }
 
 const IMAGE_PROMPTS = {
-    profile: `This is a strict Honor of Kings PROFILE SHOWCASE channel. Accept only images that visibly show an Honor of Kings player profile, in-game account profile, profile showcase, player statistics/profile page, or unmistakable HOK profile screen. Reject text-only content (handled separately), unrelated games, selfies, reaction images, emojis/stickers, food, scenery, unrelated memes, and screenshots unrelated to a HOK player profile. Do not approve an image merely because it is a game screenshot; it must clearly show a HOK profile/account showcase. Use "unknown" only when the image genuinely cannot be assessed (corrupted, unreadable, or unavailable). Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
+    profile: `This is an Honor of Kings PROFILE SHOWCASE channel.
+ACCEPT screenshots showing an HOK player profile, personal profile,
+profile gallery, account showcase, player statistics, achievements,
+or a recognizable HOK profile/gallery interface.
+A valid HOK profile or gallery screenshot does not need to show
+the main account page, provided it is clearly part of HOK.
+Do not reject a valid screenshot merely because it shows a gallery
+or profile interface instead of the main profile page.
+Reject only clearly unrelated games, unrelated real-life images,
+or content that is confidently unrelated to an HOK profile showcase.
+If uncertain whether the interface belongs to HOK, return unknown.
+Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
     skin: `This is a strict Honor of Kings SKIN SHOWCASE channel. Accept only images that visibly show an Honor of Kings skin, skin preview, in-game hero appearance using a skin, skin collection, or an unmistakable HOK skin screen. Reject clearly unrelated images, including unrelated games, selfies, reaction images, emojis/stickers, food, scenery, unrelated memes, and screenshots unrelated to HOK. Do not approve an image merely because it is a game screenshot; the image must clearly relate to an HOK skin. Use "unknown" only if the image genuinely cannot be assessed (for example, corrupted/unreadable image). Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
-    "hok-meme": `Check whether this image is an Honor of Kings-related meme. Do not infer violations from uncertain images. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
+    "hok-meme": `This is an Honor of Kings MEME SHARE channel.
+Accept HOK-related memes, hero jokes, funny gameplay screenshots,
+parodies, edits, reactions, patch/update jokes, and new-hero memes.
+This includes memes about Wang Wei and other HOK heroes.
+Do not require the image to contain the words "Honor of Kings".
+Do not reject a meme simply because the HOK connection is subtle.
+Reject only when the image is clearly unrelated to Honor of Kings.
+If you cannot confidently determine relevance, return unknown.
+Never classify uncertainty as a violation.
+Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
     "general-meme": `General memes are allowed, including non-HOK memes. Only flag clearly serious prohibited content such as explicit sexual content, credible threats, targeted severe harassment, or obvious scams. Do not guess from ambiguity. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":true|false,"reason":"short explanation"}`,
     fanart: `Check whether this image is Honor of Kings-related fan art. Do not infer violations from uncertain images. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":false,"reason":"short explanation"}`,
   };
@@ -280,7 +300,6 @@ const violationCounts = new Map();
 const stickyLocks = new Map();
 const stickyDisabledChannels = new Set();
 const stickyLastRefreshAt = new Map();
-const warningLastSentAt = new Map();
 const recentUserMessages = new Map();
 const activeSpamPenaltyUntil = new Map();
 
@@ -288,7 +307,6 @@ const activeSpamPenaltyUntil = new Map();
 const SPAM_WINDOW_MS = 10_000;
 const SPAM_MESSAGE_THRESHOLD = 5;
 const SPAM_PENALTY_COOLDOWN_MS = 60_000;
-const WARNING_COOLDOWN_MS = 30_000;
 const STICKY_REFRESH_COOLDOWN_MS = 3_000;
 
 // ============================================================
@@ -344,14 +362,19 @@ const APPRECIATION_REPLIES = [
 ];
 
 function normalizeShortReply(text) {
-  return String(text || "").trim().toLowerCase().replace(/[.!?]+$/g, "").replace(/\s+/g, " ").trim();
+  return String(text || "").trim().toLowerCase().replace(/[.,!?;:]+/g, " ").replace(/\s+/g, " ").trim();
 }
 function isAllowedCodeReply(text) {
-  return ALLOWED_CODE_REPLIES.includes(normalizeShortReply(text));
+  const value = normalizeShortReply(text);
+  if (ALLOWED_CODE_REPLIES.includes(value)) return true;
+  // Allow short combinations such as "done thank you" without opening general chat.
+  return value.length <= 80 && /^(done|used|invalid|expired|not work|error)( thank you| thanks| thank you so much| thanks a lot)?$/.test(value);
 }
 function isAppreciationReply(text) {
   const value = normalizeShortReply(text);
   if (APPRECIATION_REPLIES.includes(value)) return true;
+  if (value.length <= 80 && /^(done|used|invalid|expired|not work|error) (thank you|thanks|thank you so much|thanks a lot)$/.test(value)) return true;
+  if (value.length <= 80 && /^(thank you|thanks) (done|used|already used|invalid|expired|it worked|worked|not work|error)$/.test(value)) return true;
   // Allow short, polite variations of the appreciation examples shown in the channel rules.
   // Keep this limited to thank-you/appreciation wording to avoid permitting general chat.
   if (value.length <= 80 && /^(thank you|thanks)(\s+(so much|very much|for (the )?(help|appreciation|sharing|the code|this)))?$/.test(value)) return true;
@@ -486,23 +509,16 @@ function createStickyEmbed(rule) {
     build: "🚫 Keep posts and discussions related to Honor of Kings strategy. Unrelated content may be removed.",
   };
 
-    const embed = new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(GOLD)
     .setTitle("📢 READ REMINDER!")
-    .setDescription(
-      `**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n` +
-      `${introductions[rule.type] || rule.description}\n\n` +
-      `**CHANNEL RULES**\n\n` +
-      `${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`
-    );
-
-  // Preserve the original LAMPOON thumbnail.
-  if (LAMPOON_ICON_URL) {
-    embed.setThumbnail(LAMPOON_ICON_URL);
-  }
-
-  // Preserve the LAMPOON moderation footer.
-  return applyLampoonFooter(embed);
+    .setDescription(`**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
+  if (LAMPOON_ICON_URL) embed.setThumbnail(LAMPOON_ICON_URL);
+  applyLampoonFooter(embed);
+  // Keep the public footer clean; sticky detection uses the bot-authored reminder title.
+  const footer = { text: "LAMPOON • Moderation 🔨" };
+  if (LAMPOON_FOOTER_ICON_URL) footer.iconURL = LAMPOON_FOOTER_ICON_URL;
+  return embed.setFooter(footer);
 }
 
 // ============================================================
@@ -516,71 +532,30 @@ function isPinnedMessage(message) {
 
 function isStickyBotMessage(message) {
   if (!message) return false;
+  const isBotAuthored = Boolean(
+    message.author?.bot || (client.user && message.author?.id === client.user.id)
+  );
+  if (!isBotAuthored) return false;
 
   const embeds = message.embeds || [];
   const content = message.content || "";
-
-  // Never treat pinned channel-rule embeds as movable stickies.
-  if (message.pinned) return false;
-
-  // Only identify messages sent by bots.
-  const isBotAuthored = Boolean(
-    message.author?.bot ||
-    (client.user && message.author?.id === client.user.id)
-  );
-
-  if (!isBotAuthored) return false;
-
-  // Detect the invisible marker in older sticky messages.
-  const hasMarker =
-    embeds.some(embed =>
-      (embed.footer?.text || "").includes(STICKY_MARKER) ||
-      (embed.description || "").includes(STICKY_MARKER)
-    ) ||
-    content.includes(STICKY_MARKER);
-
+  const hasMarker = embeds.some(embed =>
+    (embed.footer?.text || "").includes(STICKY_MARKER) ||
+    (embed.description || "").includes(STICKY_MARKER)
+  ) || content.includes(STICKY_MARKER);
   if (hasMarker) return true;
 
-  // Detect the current reminder embed title.
   const hasReminderTitle = embeds.some(embed =>
-    /^(?:📢\s*)?READ\s*REMINDER\s*!?$/i.test(
-      String(embed.title || "").trim()
-    )
+    /^(?:📢\s*)?READ\s*REMINDER\s*!?$/i.test(String(embed.title || "").trim())
   );
-
   if (hasReminderTitle) return true;
 
-  // Detect older sticky formats.
-  const legacyTitles =
-    /(?:CHANNEL\s*TOPICS|LAMPOON\s*STICKY|PROFILE\s*SHOWCASE|SKIN\s*SHOWCASE|HERO\s*HIGHLIGHTS?|HOK\s*MEMES?\s*SHARE|STANDPOST\s*MEME\s*SHARE|REDEMPTION\s*CODE\s*SHARE|HOK\s*FAN[- ]?ART|HOK\s*STRATEGY\s*FORUM)/i;
+  // Pinned non-sticky messages, including 📌 READ TOPIC ! rules, are protected.
+  if (message.pinned) return false;
 
-  const legacyPhrases = [
-    "Post your profile showcase below",
-    "Show off your skins",
-    "Share your best plays and highlights below",
-    "Keep it funny, keep it HOK",
-    "Meme away — make someone smile",
-    "Please reply ONLY with:",
-    "Share your amazing art",
-    "Chat freely about Honor of Kings",
-    "Please reply only with:",
-    "Keep discussion related to Honor of Kings",
-  ];
-
-  const embedText = embeds
-    .map(embed => `${embed.title || ""}\n${embed.description || ""}`)
-    .join("\n");
-
-  const hasLegacySignature = legacyPhrases.some(phrase =>
-    `${content}\n${embedText}`
-      .toLowerCase()
-      .includes(phrase.toLowerCase())
-  );
-
-  return (
-    legacyTitles.test(embedText) &&
-    /CHANNEL RULES|READ REMINDER|LAMPOON/i.test(embedText)
-  ) || hasLegacySignature;
+  const embedText = embeds.map(embed => `${embed.title || ""}\n${embed.description || ""}`).join("\n");
+  const legacyTitles = /(?:CHANNEL\s*TOPICS|LAMPOON\s*STICKY|PROFILE\s*SHOWCASE|SKIN\s*SHOWCASE|HERO\s*HIGHLIGHTS?|HOK\s*MEMES?\s*SHARE|STANDPOST\s*MEME\s*SHARE|REDEMPTION\s*CODE\s*SHARE|HOK\s*FAN[- ]?ART|HOK\s*STRATEGY\s*FORUM)/i;
+  return legacyTitles.test(embedText) && /CHANNEL RULES|READ REMINDER|LAMPOON/i.test(embedText);
 }
 
 async function fetchRecentMessages(channel, maxMessages = 200) {
@@ -679,21 +654,16 @@ async function ensureSticky(channel, rule, refresh = true) {
   const activeLock = stickyLocks.get(channel.id);
   if (activeLock) {
     await activeLock;
-    return stickyMessages.get(channel.id) || null;
+    // A newer message may have arrived while the previous refresh was running.
+    return refresh ? ensureSticky(channel, rule, true) : (stickyMessages.get(channel.id) || null);
   }
-  const now = Date.now();
   let releaseLock;
   const lockPromise = new Promise(resolve => { releaseLock = resolve; });
   stickyLocks.set(channel.id, lockPromise);
 
   try {
     const oldStickies = await findExistingStickies(channel);
-    const inCooldown = refresh && now - (stickyLastRefreshAt.get(channel.id) || 0) < STICKY_REFRESH_COOLDOWN_MS;
-    // During cooldown, keep a single existing sticky, but still clean duplicates left by older versions.
-    if (inCooldown && oldStickies.length <= 1) {
-      if (oldStickies.length === 1) stickyMessages.set(channel.id, oldStickies[0]);
-      return oldStickies[0] || stickyMessages.get(channel.id) || null;
-    }
+    // Startup/reconnect scans preserve a single existing sticky; normal refreshes move it down.
     if (!refresh && oldStickies.length === 1) {
       stickyMessages.set(channel.id, oldStickies[0]);
       return oldStickies[0];
@@ -701,6 +671,9 @@ async function ensureSticky(channel, rule, refresh = true) {
     let deleteFailed = false;
     for (const oldSticky of oldStickies) {
       try {
+        if (oldSticky.pinned) {
+          await oldSticky.unpin("Remove duplicate LAMPOON sticky reminder");
+        }
         await oldSticky.delete();
         console.log(`🗑️ Removed old sticky in #${channel.name}`);
       } catch (error) {
@@ -1080,26 +1053,10 @@ async function logRemovedMessage(message, reason, serious = false) {
 }
 
 async function deleteOnly(message, reason) {
+  await message.delete().catch(error =>
+    console.error("❌ Delete failed:", error.message)
+  );
   await logRemovedMessage(message, reason, false);
-  await message.delete().catch(e => console.error("❌ Delete failed:", e.message));
-
-  // A messageCreate event cannot receive a true ephemeral reply. Never DM.
-  // Use one short-lived channel warning at most once per user/channel cooldown as the closest available substitute.
-  const warningKey = `${message.guild.id}:${message.channel.id}:${message.author.id}`;
-  const now = Date.now();
-  if (now - (warningLastSentAt.get(warningKey) || 0) >= WARNING_COOLDOWN_MS) {
-    warningLastSentAt.set(warningKey, now);
-    try {
-      const warning = await message.channel.send({
-        content: `${message.author} — your message was removed. **Reason:** ${reason}\n**How to fix it:** Follow the channel format above and post your own required HOK image/video as a new message when applicable.`,
-        allowedMentions: { users: [message.author.id] },
-      });
-      setTimeout(() => warning.delete().catch(() => {}), 8000);
-    } catch (e) {
-      console.warn("⚠️ Could not post temporary moderation notice:", e.message);
-    }
-  }
-
   console.log(`🗑️ Deleted in #${message.channel.name}: ${reason}`);
 }
 
@@ -1289,6 +1246,23 @@ async function initializeChannels() {
   console.log("✅ All channels initialized.");
 }
 
+async function recoverStickyReminders() {
+  console.log("🔄 Recovering sticky reminders after reconnect...");
+  for (const [channelId, rule] of Object.entries(CHANNEL_RULES)) {
+    if (rule.type === "build" || stickyDisabledChannels.has(channelId)) continue;
+    try {
+      const channel = await client.channels.fetch(channelId);
+      if (!channel?.isTextBased() || channel.type === ChannelType.GuildForum) continue;
+      stickyLastRefreshAt.delete(channelId);
+      await ensureSticky(channel, rule, false);
+      await sleep(500);
+    } catch (error) {
+      console.error(`❌ Sticky recovery failed for ${channelId}:`, error.message);
+    }
+  }
+  console.log("✅ Sticky recovery scan complete.");
+}
+
 // ============================================================
 // SLASH COMMANDS
 // ============================================================
@@ -1398,6 +1372,10 @@ client.once("clientReady", async () => {
 
   await registerCommands();
   await initializeChannels();
+});
+
+client.on("shardResume", async () => {
+  await recoverStickyReminders();
 });
 
 // ============================================================
