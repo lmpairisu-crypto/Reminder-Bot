@@ -1114,8 +1114,23 @@ function getRemovalLogDetails(message, reason, serious, actionTaken) {
   return { color, title, reasonText, why, requiredAction, actionTaken: actionTaken || "Message deleted." };
 }
 
+// Prevent duplicate log embeds if multiple handlers attempt to log the same removal.
+const loggedRemovalMessageIds = new Set();
+const MAX_LOGGED_REMOVAL_IDS = 5000;
+
 async function logRemovedMessage(message, reason, serious = false, actionTaken = "Message deleted.") {
   if (!message?.guild) return;
+  if (message.id && loggedRemovalMessageIds.has(message.id)) {
+    console.log(`ℹ️ Skipped duplicate moderation log for message ${message.id}.`);
+    return;
+  }
+  if (message.id) {
+    loggedRemovalMessageIds.add(message.id);
+    if (loggedRemovalMessageIds.size > MAX_LOGGED_REMOVAL_IDS) {
+      const oldestId = loggedRemovalMessageIds.values().next().value;
+      if (oldestId) loggedRemovalMessageIds.delete(oldestId);
+    }
+  }
   const content = String(message.content || "[No text content — message may contain attachments or embeds]").slice(0, 1000);
   const details = getRemovalLogDetails(message, reason, serious, actionTaken);
   const commonDescription = `**Member:** <@${message.author?.id}>\n**Channel:** <#${message.channel?.id}>`;
@@ -1143,8 +1158,8 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
     .setDescription(commonDescription)
     .addFields(
       { name: "Removed message", value: content.slice(0, 1024) || "[Empty message]", inline: false },
-      { name: "Reason", value: details.reasonText.slice(0, 700), inline: false },
-      { name: "Why it was removed", value: details.why.slice(0, 700), inline: false }
+      // One concise reason only; avoid repeating the same explanation in public.
+      { name: "Reason", value: details.reasonText.slice(0, 700), inline: false }
     )
     .setTimestamp();
 
