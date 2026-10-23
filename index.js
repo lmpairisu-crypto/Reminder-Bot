@@ -24,7 +24,7 @@ const GUILD_ID = process.env.GUILD_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || null;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || null; // Private admin/staff moderation log
-const REMINDER_LOG_CHANNEL_ID = process.env.REMINDER_LOG_CHANNEL_ID || null; // Member-facing moderation explanations
+const REMINDER_LOG_CHANNEL_ID = process.env.REMINDER_LOG_CHANNEL_ID || "1562888790857490462"; // Public member-facing Reminder Log
 const LAMPOON_ICON_URL = process.env.LAMPOON_ICON_URL || null; // Embed thumbnail only; intentionally separate from footer icon.
 const LAMPOON_FOOTER_ICON_URL = process.env.LAMPOON_FOOTER_ICON_URL || "https://cdn.discordapp.com/attachments/1532817641490874491/1562134042248478750/Dofoto_20261021_000232084.png?ex=6ad98af2&is=6ad83972&hm=795eb8acb674ed9005ce69ff28781ebeb87aeaab98be3ab60217d4ae035cdcf8&";
 const MODERATION_TIMEOUT_MINUTES = 0;
@@ -273,24 +273,6 @@ const client = new Client({
 
 
 // ============================================================
-// CHANNEL RULES
-// ============================================================
-
-
-
-// ============================================================
-// PINNED MESSAGES (shown at top)
-// ============================================================
-
-
-
-// ============================================================
-// STICKY MESSAGES (shown at bottom — TEXT CHANNELS ONLY)
-// ============================================================
-
-// Plain-text sticky configuration removed: sticky reminders are embed-only.;
-
-// ============================================================
 // RUNTIME MEMORY
 // ============================================================
 
@@ -357,7 +339,8 @@ const ALLOWED_CODE_REPLIES = ["done", "used", "invalid", "expired", "not work", 
 const APPRECIATION_REPLIES = [
   "thank you", "thanks", "appreciate it", "i appreciate it", "i appreciate your help",
   "thank you so much", "thanks a lot", "thank you for appreciation", "thank you for the appreciation",
-  "thank you for your help", "thanks for your help", "much appreciated"
+  "thank you for your help", "thanks for your help", "much appreciated",
+  "salamat", "salamat po", "maraming salamat", "salamat sa tulong"
 ];
 
 function normalizeShortReply(text) {
@@ -377,6 +360,7 @@ function isAppreciationReply(text) {
   // Allow short, polite variations of the appreciation examples shown in the channel rules.
   // Keep this limited to thank-you/appreciation wording to avoid permitting general chat.
   if (value.length <= 80 && /^(thank you|thanks)(\s+(so much|very much|for (the )?(help|appreciation|sharing|the code|this)))?$/.test(value)) return true;
+  if (/^(salamat|salamat po|maraming salamat|salamat sa tulong)$/.test(value)) return true;
   if (value.length <= 80 && /^(i )?appreciate( it| this| your (help|sharing|effort))$/.test(value)) return true;
   return false;
 }
@@ -511,7 +495,7 @@ function createStickyEmbed(rule) {
   const embed = new EmbedBuilder()
     .setColor(GOLD)
     .setTitle("📢 READ REMINDER!")
-    .setDescription(`**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}\n\n${STICKY_MARKER}`);
+    .setDescription(`**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
   if (LAMPOON_ICON_URL) embed.setThumbnail(LAMPOON_ICON_URL);
   return applyLampoonFooter(embed);
 }
@@ -691,9 +675,9 @@ async function ensureSticky(channel, rule, refresh = true) {
   if (stickyDisabledChannels.has(channel.id)) return null;
   const activeLock = stickyLocks.get(channel.id);
   if (activeLock) {
-    await activeLock;
-    // A newer message may have arrived while the previous refresh was running.
-    return refresh ? ensureSticky(channel, rule, true) : (stickyMessages.get(channel.id) || null);
+    // A refresh is already in progress. Do not queue recursive refreshes;
+    // the active refresh will leave one current sticky in the channel.
+    return stickyMessages.get(channel.id) || null;
   }
   let releaseLock;
   const lockPromise = new Promise(resolve => { releaseLock = resolve; });
@@ -1013,8 +997,7 @@ async function sendModerationLog(embed, memberId = null) {
   try {
     const channel = await client.channels.fetch(MOD_LOG_CHANNEL_ID);
     if (channel?.isTextBased()) {
-      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: memberId ? [memberId] : [] } };
-      if (memberId) payload.content = `<@${memberId}>`;
+      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: [] } };
       await channel.send(payload);
     } else {
       console.error("❌ MOD LOG channel is missing or is not text-based.");
@@ -1035,8 +1018,7 @@ async function sendReminderLog(embed, memberId = null) {
   try {
     const channel = await client.channels.fetch(REMINDER_LOG_CHANNEL_ID);
     if (channel?.isTextBased()) {
-      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: memberId ? [memberId] : [] } };
-      if (memberId) payload.content = `<@${memberId}>`;
+      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: [] } };
       await channel.send(payload);
     } else {
       console.error("❌ REMINDER LOG channel is missing or is not text-based.");
@@ -1101,7 +1083,9 @@ async function registerViolation(message, reason, serious = false, isSpam = fals
 
 function getRemovalLogDetails(message, reason, serious, actionTaken) {
   const reasonText = String(reason || "No reason provided").trim();
-  const hasMedia = Boolean(message.attachments?.size) || /\b(image|screenshot|video|gif|media|skin showcase|profile showcase|fan.?art|meme image)\b/i.test(reasonText);
+  // Orange is reserved for a message that actually contained an attachment.
+  // Text-only validation reasons may mention "image/video" but remain yellow.
+  const hasMedia = Boolean(message.attachments?.size);
   const color = serious ? "#FF3030" : (hasMedia ? "#FF8C00" : "#FFD700");
   const title = serious ? "🔴 SERIOUS VIOLATION" : (hasMedia ? "🟠 MEDIA SUBMISSION REMOVED" : "🟡 CONTENT CORRECTION REQUIRED");
   let why;
@@ -1151,22 +1135,23 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
     )
     .setTimestamp();
 
-  // PUBLIC REMINDER LOG EMBED: member-facing explanation; omit raw submitted content and message ID.
+  // PUBLIC REMINDER LOG: concise, shows the actual removed text, no ping,
+  // message ID, required-action boilerplate, or admin-only moderation details.
   const reminderEmbed = new EmbedBuilder()
     .setColor(details.color)
     .setTitle(details.title)
     .setDescription(commonDescription)
     .addFields(
-      { name: "📋 Reason", value: details.reasonText.slice(0, 1024), inline: false },
-      { name: "❓ Why was it removed?", value: details.why.slice(0, 1024), inline: false },
-      { name: "🛠️ Required action", value: details.requiredAction.slice(0, 1024), inline: false },
-      { name: "⚖️ Moderation action", value: String(details.actionTaken).slice(0, 1024), inline: false }
+      { name: "Removed message", value: content.slice(0, 1024) || "[Empty message]", inline: false },
+      { name: "Reason", value: details.reasonText.slice(0, 700), inline: false },
+      { name: "Why it was removed", value: details.why.slice(0, 700), inline: false }
     )
     .setTimestamp();
 
+  // Keep the public member-facing log and private staff audit log separate.
   await Promise.all([
-    sendModerationLog(modEmbed, message.author?.id),
-    sendReminderLog(reminderEmbed, message.author?.id)
+    sendModerationLog(modEmbed),
+    sendReminderLog(reminderEmbed)
   ]);
 }
 
@@ -1226,8 +1211,10 @@ async function processMessage(message, rule) {
 // Only new messages are moderated after the bot starts.
 
 async function refreshStickyAfterMessage(channel, rule) {
-  // No delay: await completion before the message enters spam/AI moderation.
-  await ensureSticky(channel, rule, true);
+  // Refresh in the background so moderation never freezes while sticky history is scanned.
+  void ensureSticky(channel, rule, true).catch(error =>
+    console.error(`❌ Background sticky refresh failed in #${channel.name}:`, error.message)
+  );
 }
 
 // ============================================================
@@ -1243,11 +1230,9 @@ client.on("messageCreate", async (message) => {
     const rule = directRule || parentRule;
     if (!rule) return;
 
-    // Move/replace the sticky BEFORE spam checks, AI scanning, and moderation.
-    // This keeps it at the bottom while a post is being scanned, even if the
-    // post is later removed. ensureSticky serializes work per channel.
+    // Queue a non-blocking sticky refresh. Moderation continues immediately.
     if (!(channel.isThread?.() && parentRule?.type === "build")) {
-      await refreshStickyAfterMessage(channel, rule);
+      void refreshStickyAfterMessage(channel, rule);
     }
 
     const spam = detectSpam(message);
@@ -1267,14 +1252,8 @@ client.on("messageCreate", async (message) => {
 
     const processed = await processMessage(message, rule);
 
-    // Code Share: preserve the existing helpful replies, but never send warnings or DMs.
-    if (processed.action === "allowed" && rule.type === "code" && message.reference) {
-      if (isAppreciationReply(message.content)) {
-        await message.reply({ content: "You're welcome! Happy to help!" }).catch(() => {});
-      } else if (isAllowedCodeReply(message.content)) {
-        await message.reply({ content: "Thank you! Your response has been noted." }).catch(() => {});
-      }
-    }
+    // Code Share: allowed status and appreciation replies remain visible as member messages.
+    // The bot does not add a public "Thank you" response.
   } catch (e) { console.error("❌ messageCreate error:", e); }
 });
 
