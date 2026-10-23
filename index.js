@@ -16,7 +16,7 @@ const {
 } = require("discord.js");
 
 // ============================================================
-// CONFIGURATION — INLINE (Railway environment variables)
+// SECTION 1 — CONFIGURATION (INLINE ENVIRONMENT VARIABLES)
 // ============================================================
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
@@ -190,7 +190,7 @@ if (!GEMINI_API_KEY) {
 }
 
 // ============================================================
-// HELPERS
+// SECTION 2 — SHARED HELPERS AND CONSTANTS
 // ============================================================
 
 function sleep(ms) {
@@ -198,7 +198,7 @@ function sleep(ms) {
 }
 
 // ============================================================
-// GEMINI AI
+// SECTION 3 — GEMINI AI, CACHE, AND QUOTA PROTECTION
 // ============================================================
 
 const genAI = GEMINI_API_KEY
@@ -246,7 +246,7 @@ const TEXT_REVIEW_HINTS = /https?:\/\/|www\.|discord\.gg|t\.me\/|free\s+(?:skin|
 function needsAITextReview(text) { return Boolean(text && text.trim().length >= 8 && TEXT_REVIEW_HINTS.test(text)); }
 
 // ============================================================
-// DISCORD CLIENT
+// SECTION 4 — DISCORD CLIENT AND RUNTIME STATE
 // ============================================================
 
 const client = new Client({
@@ -269,7 +269,7 @@ const client = new Client({
 // CONSTANTS
 // ============================================================
 
-// Shared constants are imported from ./config.
+// All configuration and shared constants are defined inline in this file.
 
 
 // ============================================================
@@ -421,7 +421,7 @@ function isHokRelatedConversation(text) {
 }
 
 // ============================================================
-// CREATE PINNED EMBED
+// SECTION 5 — PINNED AND STICKY EMBED BUILDERS
 // ============================================================
 
 function createPinnedEmbed(rule) {
@@ -501,7 +501,7 @@ function createStickyEmbed(rule) {
 }
 
 // ============================================================
-// DETECT MESSAGES
+// SECTION 6 — STICKY IDENTIFICATION, HISTORY SCANS, AND CLEANUP
 // ============================================================
 
 function isPinnedMessage(message) {
@@ -730,7 +730,7 @@ async function ensureSticky(channel, rule, refresh = true) {
 }
 
 // ============================================================
-// GEMINI IMAGE CLASSIFICATION
+// SECTION 7 — GEMINI IMAGE SCANNING
 // ============================================================
 
 async function askGeminiImage(imageUrl, channelType) {
@@ -772,7 +772,8 @@ async function askGeminiImage(imageUrl, channelType) {
   }
 }
 
-// TEXT SERIOUS-CONTENT CHECK — GEMINI
+// ============================================================
+// SECTION 8 — SERIOUS TEXT SCANNING
 // ============================================================
 
 async function checkTextForSeriousViolation(message) {
@@ -803,7 +804,8 @@ async function checkTextForSeriousViolation(message) {
   }
 }
 
-// VALIDATION HELPERS
+// ============================================================
+// SECTION 9 — CHANNEL-SPECIFIC VALIDATORS
 // ============================================================
 
 function validateEventCode(message) {
@@ -840,7 +842,7 @@ async function scanMessageImages(images, channelType) {
 }
 
 // ============================================================
-// MESSAGE VALIDATION
+// SECTION 10 — MESSAGE VALIDATION AND CATEGORY ROUTING
 // ============================================================
 
 async function validateMessage(message, rule) {
@@ -985,7 +987,7 @@ async function validateMessage(message, rule) {
 }
 
 // ============================================================
-// MODERATION — SIMPLIFIED: ONLY SERIOUS = ACTION
+// SECTION 11 — MODERATION ACTIONS AND VIOLATION TRACKING
 // ============================================================
 
 async function sendModerationLog(embed, memberId = null) {
@@ -1114,6 +1116,7 @@ function getRemovalLogDetails(message, reason, serious, actionTaken) {
   return { color, title, reasonText, why, requiredAction, actionTaken: actionTaken || "Message deleted." };
 }
 
+// SECTION 12 — COLOR-CODED REMOVAL REASONS AND MODERATION LOGS
 // Prevent duplicate log embeds if multiple handlers attempt to log the same removal.
 const loggedRemovalMessageIds = new Set();
 const MAX_LOGGED_REMOVAL_IDS = 5000;
@@ -1233,7 +1236,7 @@ async function refreshStickyAfterMessage(channel, rule) {
 }
 
 // ============================================================
-// EVENT HANDLERS
+// SECTION 13 — SPAM DETECTION AND MESSAGE EVENT HANDLING
 // ============================================================
 
 client.on("messageCreate", async (message) => {
@@ -1285,7 +1288,7 @@ client.on("messageReactionAdd", async (reaction, user) => {
 });
 
 // ============================================================
-// CHANNEL INIT — PINNED FIRST, THEN STICKY
+// SECTION 14 — FORUM GUIDE, CHANNEL INITIALIZATION, AND STICKY RECOVERY
 // ============================================================
 
 const forumGuideThreads = new Map();
@@ -1380,7 +1383,7 @@ async function recoverStickyReminders() {
 }
 
 // ============================================================
-// SLASH COMMANDS
+// SECTION 15 — SLASH COMMANDS
 // ============================================================
 
 const commands = [
@@ -1478,7 +1481,7 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 // ============================================================
-// BOT READY
+// SECTION 16 — STARTUP, RECONNECT, ERROR HANDLING, AND RENDER HEALTH CHECK
 // ============================================================
 
 client.once("clientReady", async () => {
@@ -1503,8 +1506,7 @@ client.on("shardResume", async () => {
   await recoverStickyReminders();
 });
 
-// ============================================================
-// ERROR HANDLING
+// ERROR HANDLING (SECTION 16)
 // ============================================================
 
 client.on("error", (error) => console.error("❌ Discord Error:", error));
@@ -1520,8 +1522,7 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
-// ============================================================
-// RENDER HEALTH ENDPOINT
+// RENDER HEALTH ENDPOINT (SECTION 16)
 // ============================================================
 // Render supplies PORT automatically. UptimeRobot can monitor /health.
 // This endpoint reports that the Node.js HTTP process is responding;
@@ -1543,8 +1544,7 @@ healthServer.listen(PORT, "0.0.0.0", () => {
   console.log(`🌐 Render health server running on port ${PORT}`);
 });
 
-// ============================================================
-// LOGIN
+// DISCORD LOGIN (SECTION 16)
 // ============================================================
 
 client.login(TOKEN)
