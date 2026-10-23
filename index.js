@@ -16,12 +16,8 @@ const {
 } = require("discord.js");
 
 // ============================================================
-// CONFIGURATION — INLINE (Railway environment variables)
+// SECTION 01 — CONFIGURATION AND ENVIRONMENT VARIABLES
 // ============================================================
-// ============================================================
-// SECTION 1. CONFIGURATION AND ENVIRONMENT VARIABLES
-// ============================================================
-
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
@@ -40,20 +36,12 @@ const PINNED_MARKER = "📌 READ TOPIC !";
 const STICKY_MARKER = "\u2063LMP_REMINDER_STICKY\u2063";
 const AVISALA = "<a:Avisala:1542448826265243660>";
 
-// ============================================================
-// SECTION 3. EMBED FOOTER HELPER
-// ============================================================
-
 function applyLampoonFooter(embed) {
   const footer = { text: "LAMPOON • Moderation 🔨" };
   if (LAMPOON_FOOTER_ICON_URL) footer.iconURL = LAMPOON_FOOTER_ICON_URL;
   // Do not add the sticky marker to moderation logs or other embeds.
   return embed.setFooter(footer);
 }
-
-// ============================================================
-// SECTION 2. CHANNEL AND MODERATION PROMPT CONFIGURATION
-// ============================================================
 
 const IMAGE_PROMPTS = {
     profile: `This is an Honor of Kings PROFILE SHOWCASE channel.
@@ -202,11 +190,7 @@ if (!GEMINI_API_KEY) {
 }
 
 // ============================================================
-// HELPERS
-// ============================================================
-
-// ============================================================
-// SECTION 4. SHARED HELPERS AND CONSTANTS
+// SECTION 02 — SHARED HELPERS AND FOOTER
 // ============================================================
 
 function sleep(ms) {
@@ -214,11 +198,7 @@ function sleep(ms) {
 }
 
 // ============================================================
-// GEMINI AI
-// ============================================================
-
-// ============================================================
-// SECTION 5. GEMINI AI, CACHE, AND QUOTA PROTECTION
+// SECTION 03 — GEMINI AI AND QUOTA PROTECTION
 // ============================================================
 
 const genAI = GEMINI_API_KEY
@@ -266,11 +246,7 @@ const TEXT_REVIEW_HINTS = /https?:\/\/|www\.|discord\.gg|t\.me\/|free\s+(?:skin|
 function needsAITextReview(text) { return Boolean(text && text.trim().length >= 8 && TEXT_REVIEW_HINTS.test(text)); }
 
 // ============================================================
-// DISCORD CLIENT
-// ============================================================
-
-// ============================================================
-// SECTION 6. DISCORD CLIENT AND RUNTIME STATE
+// SECTION 04 — DISCORD CLIENT
 // ============================================================
 
 const client = new Client({
@@ -290,32 +266,31 @@ const client = new Client({
 });
 
 // ============================================================
-// CONSTANTS
+// SECTION 05 — RUNTIME CONSTANTS AND STATE
 // ============================================================
 
-// Constants and channel configuration remain inline in this single file.
-
-
-// ============================================================
-// CHANNEL RULES
-// ============================================================
-
+// Shared constants are imported from ./config.
 
 
 // ============================================================
-// PINNED MESSAGES (shown at top)
+// SECTION 06 — CHANNEL RULES
 // ============================================================
 
 
 
 // ============================================================
-// STICKY MESSAGES (shown at bottom — TEXT CHANNELS ONLY)
+// SECTION 07 — PINNED MESSAGE CONFIGURATION
 // ============================================================
 
-// Plain-text sticky configuration removed: sticky reminders are embed-only.;
+
 
 // ============================================================
-// RUNTIME MEMORY
+// SECTION 08 — STICKY REMINDER CONFIGURATION
+// ============================================================
+
+
+// ============================================================
+// SECTION 09 — RUNTIME MEMORY AND RATE LIMITS
 // ============================================================
 
 const pinnedMessages = new Map();
@@ -333,11 +308,7 @@ const SPAM_MESSAGE_THRESHOLD = 5;
 const SPAM_PENALTY_COOLDOWN_MS = 60_000;
 
 // ============================================================
-// MEDIA HELPERS
-// ============================================================
-
-// ============================================================
-// SECTION 7. MEDIA HELPERS
+// SECTION 10 — MEDIA HELPERS
 // ============================================================
 
 function isImage(attachment) {
@@ -365,11 +336,7 @@ function getVideos(message) {
 }
 
 // ============================================================
-// EVENT CODE DETECTION
-// ============================================================
-
-// ============================================================
-// SECTION 8. EVENT CODE DETECTION
+// SECTION 11 — EVENT CODE DETECTION
 // ============================================================
 
 function containsPossibleCode(text) {
@@ -382,11 +349,7 @@ function containsPossibleCode(text) {
 }
 
 // ============================================================
-// ALLOWED REPLIES — CODE CHANNEL
-// ============================================================
-
-// ============================================================
-// SECTION 9. ALLOWED CODE REPLIES AND APPRECIATION
+// SECTION 12 — ALLOWED CODE-CHANNEL REPLIES
 // ============================================================
 
 const ALLOWED_CODE_REPLIES = ["done", "used", "invalid", "expired", "not work", "error"];
@@ -418,11 +381,7 @@ function isAppreciationReply(text) {
 }
 
 // ============================================================
-// ============================================================
-// SECTION 10. STRATEGY FORUM KEYWORDS
-// ============================================================
-
-// STRATEGY FORUM — KEYWORDS (English + Tagalog)
+// SECTION 13 — STRATEGY FORUM KEYWORDS
 // ============================================================
 
 const QUICK_POSITIVE_WORDS = [
@@ -477,11 +436,7 @@ function isHokRelatedConversation(text) {
 }
 
 // ============================================================
-// CREATE PINNED EMBED
-// ============================================================
-
-// ============================================================
-// SECTION 11. PINNED AND STICKY EMBED BUILDERS
+// SECTION 14 — PINNED AND STICKY EMBED BUILDERS
 // ============================================================
 
 function createPinnedEmbed(rule) {
@@ -561,11 +516,7 @@ function createStickyEmbed(rule) {
 }
 
 // ============================================================
-// DETECT MESSAGES
-// ============================================================
-
-// ============================================================
-// SECTION 12. STICKY IDENTIFICATION, HISTORY SCANS, AND CLEANUP
+// SECTION 15 — MESSAGE AND STICKY IDENTIFICATION
 // ============================================================
 
 function isPinnedMessage(message) {
@@ -794,11 +745,7 @@ async function ensureSticky(channel, rule, refresh = true) {
 }
 
 // ============================================================
-// GEMINI IMAGE CLASSIFICATION
-// ============================================================
-
-// ============================================================
-// SECTION 13. GEMINI IMAGE SCANNING
+// SECTION 16 — GEMINI IMAGE CLASSIFICATION
 // ============================================================
 
 async function askGeminiImage(imageUrl, channelType) {
@@ -843,10 +790,6 @@ async function askGeminiImage(imageUrl, channelType) {
 // TEXT SERIOUS-CONTENT CHECK — GEMINI
 // ============================================================
 
-// ============================================================
-// SECTION 14. SERIOUS TEXT SCANNING
-// ============================================================
-
 async function checkTextForSeriousViolation(message) {
   const text = message.content?.trim() || "";
   if (!text || !genAI || !needsAITextReview(text)) return { serious: false, reason: "" };
@@ -876,10 +819,6 @@ async function checkTextForSeriousViolation(message) {
 }
 
 // VALIDATION HELPERS
-// ============================================================
-
-// ============================================================
-// SECTION 15. CHANNEL-SPECIFIC VALIDATORS
 // ============================================================
 
 function validateEventCode(message) {
@@ -916,11 +855,7 @@ async function scanMessageImages(images, channelType) {
 }
 
 // ============================================================
-// MESSAGE VALIDATION
-// ============================================================
-
-// ============================================================
-// SECTION 16. MESSAGE VALIDATION AND CATEGORY ROUTING
+// SECTION 17 — MESSAGE VALIDATION AND CHANNEL ROUTING
 // ============================================================
 
 async function validateMessage(message, rule) {
@@ -1068,10 +1003,6 @@ async function validateMessage(message, rule) {
 // MODERATION — SIMPLIFIED: ONLY SERIOUS = ACTION
 // ============================================================
 
-// ============================================================
-// SECTION 18. PRIVATE ADMIN AND PUBLIC REMINDER LOGS
-// ============================================================
-
 async function sendModerationLog(embed, memberId = null) {
   // Private MOD LOG: staff-only channel configured with MOD_LOG_CHANNEL_ID.
   if (!MOD_LOG_CHANNEL_ID) {
@@ -1111,10 +1042,6 @@ async function sendReminderLog(embed, memberId = null) {
     }
   } catch (e) { console.error("❌ REMINDER LOG send failed:", e.message); }
 }
-
-// ============================================================
-// SECTION 17. MODERATION ACTIONS AND VIOLATION TRACKING
-// ============================================================
 
 async function timeoutMember(member, minutes, reason) {
   if (!member) return { ok: false, reason: "Member could not be fetched." };
@@ -1251,10 +1178,6 @@ async function deleteOnly(message, reason) {
 }
 
 
-// ============================================================
-// SECTION 19. SPAM DETECTION AND MESSAGE EVENT HANDLING
-// ============================================================
-
 function detectSpam(message) {
   const now = Date.now();
   const key = `${message.guild.id}:${message.channel.id}:${message.author.id}`;
@@ -1307,7 +1230,7 @@ async function refreshStickyAfterMessage(channel, rule) {
 }
 
 // ============================================================
-// EVENT HANDLERS
+// SECTION 18 — MESSAGE EVENT HANDLERS AND SPAM DETECTION
 // ============================================================
 
 client.on("messageCreate", async (message) => {
@@ -1367,7 +1290,7 @@ client.on("messageReactionAdd", async (reaction, user) => {
 });
 
 // ============================================================
-// CHANNEL INIT — PINNED FIRST, THEN STICKY
+// SECTION 19 — CHANNEL INITIALIZATION AND STICKY RECOVERY
 // ============================================================
 
 const forumGuideThreads = new Map();
@@ -1394,10 +1317,6 @@ async function findForumGuideThread(forum) {
   }
   return null;
 }
-
-// ============================================================
-// SECTION 20. FORUM GUIDE AND CHANNEL INITIALIZATION
-// ============================================================
 
 async function initializeForumChannel(forum, rule) {
   let guideThread = await findForumGuideThread(forum);
@@ -1448,10 +1367,6 @@ async function initializeChannels() {
   console.log("✅ All channels initialized.");
 }
 
-// ============================================================
-// SECTION 21. STICKY RECOVERY AND RECONNECT HANDLING
-// ============================================================
-
 async function recoverStickyReminders() {
   console.log("🔄 Recovering sticky reminders after reconnect...");
   for (const [channelId, rule] of Object.entries(CHANNEL_RULES)) {
@@ -1470,7 +1385,7 @@ async function recoverStickyReminders() {
 }
 
 // ============================================================
-// SLASH COMMANDS
+// SECTION 20 — SLASH COMMANDS
 // ============================================================
 
 const commands = [
@@ -1479,10 +1394,6 @@ const commands = [
   new SlashCommandBuilder().setName("sticky-list").setDescription("List all stickies").setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
   new SlashCommandBuilder().setName("sticky-setup").setDescription("Create sticky").setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
 ].map(c => c.toJSON());
-
-// ============================================================
-// SECTION 22. SLASH COMMANDS, STARTUP, AND ERROR HANDLING
-// ============================================================
 
 async function registerCommands() {
   try {
@@ -1572,7 +1483,7 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 // ============================================================
-// BOT READY
+// SECTION 21 — BOT STARTUP AND READY EVENT
 // ============================================================
 
 client.once("clientReady", async () => {
@@ -1598,7 +1509,7 @@ client.on("shardResume", async () => {
 });
 
 // ============================================================
-// ERROR HANDLING
+// SECTION 22 — ERROR HANDLING AND SHUTDOWN
 // ============================================================
 
 client.on("error", (error) => console.error("❌ Discord Error:", error));
@@ -1615,15 +1526,11 @@ process.on("SIGTERM", () => {
 });
 
 // ============================================================
-// RENDER HEALTH ENDPOINT
+// SECTION 23 — RENDER HEALTH CHECK AND DISCORD LOGIN
 // ============================================================
 // Render supplies PORT automatically. UptimeRobot can monitor /health.
 // This endpoint reports that the Node.js HTTP process is responding;
 // it does not guarantee that Render Free will remain awake 24/7.
-// ============================================================
-// SECTION 23. RENDER HEALTH CHECK AND DISCORD LOGIN
-// ============================================================
-
 const PORT = Number(process.env.PORT) || 10000;
 const healthServer = http.createServer((req, res) => {
   const pathname = new URL(req.url, `http://${req.headers.host || "localhost"}`).pathname;
@@ -1641,9 +1548,6 @@ healthServer.listen(PORT, "0.0.0.0", () => {
   console.log(`🌐 Render health server running on port ${PORT}`);
 });
 
-// ============================================================
-// LOGIN
-// ============================================================
 
 client.login(TOKEN)
   .then(() => console.log("🔐 Discord login successful."))
