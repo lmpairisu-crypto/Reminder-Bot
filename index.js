@@ -847,9 +847,11 @@ async function checkTextForSeriousViolation(message) {
 
 // ============================================================
 // SECTION 17 — MESSAGE VALIDATION AND CHANNEL ROUTING
+// Contains code/build validators, image scanning, serious-text checks, and the
+// complete per-channel message validation/router used by Section 18.
 // ============================================================
 
-// VALIDATION HELPERS
+// SUBSECTION 17.1 — EVENT CODE AND STRATEGY POST VALIDATION
 // ============================================================
 
 function validateEventCode(message) {
@@ -1027,11 +1029,10 @@ async function validateMessage(message, rule) {
 }
 
 // ============================================================
-// SECTION 18 — MESSAGE EVENT HANDLERS AND SPAM DETECTION
+// SECTION 18 — MODERATION ACTIONS, LOGGING, AND MESSAGE EVENTS
 // ============================================================
 
-// ============================================================
-// SECTION 18A — ADMIN MOD LOG (PRIVATE AUDIT)
+// SUBSECTION 18.1 — ADMIN MOD LOG (PRIVATE AUDIT)
 // ============================================================
 // Preserve the full audit trail for staff: member, channel, reason, context,
 // suggested correction, action taken, original content, and message ID.
@@ -1054,8 +1055,7 @@ async function sendModerationLog(embed, memberId = null) {
   } catch (e) { console.error("❌ MOD LOG send failed:", e.message); }
 }
 
-// ============================================================
-// SECTION 18B — PUBLIC REMINDER LOG (MEMBER-FACING)
+// SUBSECTION 18.2 — PUBLIC REMINDER LOG (MEMBER-FACING)
 // ============================================================
 // This is intentionally a separate, concise log; it is not an audit copy.
 async function sendReminderLog(embed, memberId = null) {
@@ -1235,6 +1235,8 @@ async function deleteOnly(message, reason) {
 }
 
 
+// SUBSECTION 18.3 — MESSAGE DELETION, VIOLATION ACTIONS, AND SPAM DETECTION
+// ============================================================
 function detectSpam(message) {
   const now = Date.now();
   const key = `${message.guild.id}:${message.channel.id}:${message.author.id}`;
@@ -1278,8 +1280,7 @@ async function processMessage(message, rule) {
   return { action: "deleted", result };
 }
 
-// ============================================================
-// SECTION 18A — SAFE HISTORICAL CHAT CLEANUP
+// SUBSECTION 18.4 — SAFE HISTORICAL CHAT CLEANUP
 // Only remove clearly invalid text-only chat from configured submission
 // channels. Never delete messages containing attachments/media, and never
 // run AI image checks during cleanup. This protects valid pass/code/media
@@ -1359,6 +1360,8 @@ async function cleanupHistoricalChat() {
   console.log(`✅ Safe historical cleanup complete. Scanned ${scanned} messages; removed ${removed} text-only chat violations. Messages with attachments/media were preserved.`);
 }
 
+// SUBSECTION 18.5 — LIVE MESSAGE EVENT HANDLERS AND STICKY REFRESH
+// ============================================================
 async function refreshStickyAfterMessage(channel, rule) {
   // No delay: await completion before the message enters spam/AI moderation.
   await ensureSticky(channel, rule, true);
@@ -1398,6 +1401,7 @@ client.on("messageCreate", async (message) => {
     }
 
     const processed = await processMessage(message, rule);
+    console.log(`📨 Moderation result | channel=#${channel.name} (${channel.id}) | user=${message.author.tag} | action=${processed.action} | reason=${processed.result?.reason || "none"}`);
 
     // Code Share: allowed status/appreciation replies stay silent.
     // Do not post public bot messages such as "Thank you" or "response noted".
