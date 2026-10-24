@@ -1748,69 +1748,36 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
-// ============================================================
-// SECTION 23 — RENDER HEALTH CHECK AND DISCORD LOGIN
-// ============================================================
-// Render supplies PORT automatically. UptimeRobot can monitor /health.
-// /health confirms the HTTP process is alive for Render deployment readiness.
-// /discord-health reports the actual Discord Gateway state for external monitoring.
-// Render Free may still sleep; an HTTP health check cannot guarantee 24/7 uptime.
-const PORT = Number(process.env.PORT) || 10000;
-const healthServer = http.createServer((req, res) => {
-  let pathname;
-  try {
-    pathname = new URL(req.url, `http://${req.headers.host || "localhost"}`).pathname;
-  } catch {
-    res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
-    return res.end("Bad Request");
-  }
+ // ============================================================
+ // SECTION 23 — RENDER HEALTH CHECK AND DISCORD LOGIN
+ // ============================================================
 
-  // Render's deployment health check must confirm the HTTP process has started.
-  // Do not make deployment readiness depend on Discord Gateway timing; a slow
-  // Discord connection otherwise causes Render to time out and restart the app.
-  if (req.method === "GET" && pathname === "/health") {
-    res.writeHead(200, {
-      "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
-    });
-    return res.end(JSON.stringify({
-      status: "ok",
-      process: "running",
-      discord: client.isReady() ? "ready" : "starting_or_disconnected",
-      uptimeSeconds: Math.floor(process.uptime()),
-    }));
-  }
-
-  // Use /discord-health for monitoring the actual Discord Gateway state.
-  if (req.method === "GET" && pathname === "/discord-health") {
-    const discordReady = client.isReady();
-    res.writeHead(discordReady ? 200 : 503, {
-      "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
-    });
-    return res.end(JSON.stringify({
-      status: discordReady ? "ok" : "degraded",
-      discord: discordReady ? "ready" : "disconnected_or_starting",
-      uptimeSeconds: Math.floor(process.uptime()),
-    }));
-  }
-
-  res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-  res.end("Reminder Bot process is running.");
+client.on("error", (error) => {
+  console.error("❌ Discord client error:", error);
 });
 
-healthServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`🌐 Render health server running on port ${PORT}`);
+client.on("shardError", (error, shardId) => {
+  console.error(`❌ Discord shard ${shardId} error:`, error);
 });
 
+client.on("shardDisconnect", (event, shardId) => {
+  console.warn(
+    `⚠️ Discord shard ${shardId} disconnected. Code:`,
+    event?.code ?? "unknown",
+    "Reason:",
+    event?.reason || "not provided"
+  );
+});
 
-client.login(TOKEN)
-  .then(() => console.log("🔐 Discord login handshake accepted; waiting for Gateway READY event."))
-  .catch((error) => {
-    console.error("❌ Discord login failed:", error);
-    process.exitCode = 1;
-  });
+console.log("🔎 Checking Discord token configuration:", {
+  tokenPresent: Boolean(TOKEN),
+  tokenType: typeof TOKEN,
+});
 
+// Call client.login() exactly once in the entire file.
+client.login(TOKEN).catch((error) => {
+  console.error("❌ Discord login failed:", error);
+});
 
 // ============================================================
 // SECTION 24 — MAINTENANCE NOTES
