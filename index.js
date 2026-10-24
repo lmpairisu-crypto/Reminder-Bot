@@ -27,21 +27,39 @@ const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || null; // Private ad
 const REMINDER_LOG_CHANNEL_ID = process.env.REMINDER_LOG_CHANNEL_ID || null; // Member-facing moderation explanations
 const LAMPOON_ICON_URL = process.env.LAMPOON_ICON_URL || null; // Embed thumbnail only; intentionally separate from footer icon.
 const LAMPOON_FOOTER_ICON_URL = process.env.LAMPOON_FOOTER_ICON_URL || "https://cdn.discordapp.com/attachments/1532817641490874491/1562134042248478750/Dofoto_20261021_000232084.png?ex=6ad98af2&is=6ad83972&hm=795eb8acb674ed9005ce69ff28781ebeb87aeaab98be3ab60217d4ae035cdcf8&";
-const MODERATION_TIMEOUT_MINUTES = 0;
-const REPEATED_VIOLATION_TIMEOUT_MINUTES = 0;
-const SERIOUS_VIOLATION_TIMEOUT_MINUTES = 60;
-const SPAM_TIMEOUT_MINUTES = 1;
-const GOLD = "#D4AF37";
-const PINNED_MARKER = "📌 READ TOPIC !";
-const STICKY_MARKER = "\u2063LMP_REMINDER_STICKY\u2063";
-const AVISALA = "<a:Avisala:1542448826265243660>";
+
+if (!TOKEN) throw new Error("Missing DISCORD_TOKEN.");
+if (!CLIENT_ID) throw new Error("Missing CLIENT_ID.");
+if (!GUILD_ID) throw new Error("Missing GUILD_ID.");
+
+if (!GEMINI_API_KEY) {
+  console.warn("⚠️ GEMINI_API_KEY is not configured. Image AI moderation will be unavailable.");
+}
+
+// ============================================================
+// SECTION 02 — SHARED HELPERS AND FOOTER
+// ============================================================
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 
 function applyLampoonFooter(embed) {
   const footer = { text: "LAMPOON • Moderation 🔨" };
   if (LAMPOON_FOOTER_ICON_URL) footer.iconURL = LAMPOON_FOOTER_ICON_URL;
-  // Do not add the sticky marker to moderation logs or other embeds.
+  // Do not add the hidden sticky marker to moderation logs or other embeds.
   return embed.setFooter(footer);
 }
+
+// ============================================================
+// SECTION 03 — GEMINI AI AND QUOTA PROTECTION
+// ============================================================
+
+const genAI = GEMINI_API_KEY
+  ? new GoogleGenerativeAI(GEMINI_API_KEY)
+  : null;
+
 
 const IMAGE_PROMPTS = {
     profile: `This is an Honor of Kings PROFILE SHOWCASE channel.
@@ -76,7 +94,82 @@ function buildSeriousTextPrompt(text) {
 }
 
 
+// AI quota protection: stop repeated requests after Gemini reports quota/rate limiting.
+let geminiCooldownUntil = 0;
+const AI_RESULT_CACHE = new Map();
+const AI_CACHE_TTL_MS = 10 * 60 * 1000;
+const AI_CACHE_MAX_ENTRIES = 500;
+const MAX_IMAGES_TO_SCAN_PER_MESSAGE = 3;
+const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 
+function isGeminiCoolingDown() { return Date.now() < geminiCooldownUntil; }
+
+function noteGeminiError(error) {
+  const message = String(error?.message || error || "");
+  if (/429|quota|rate.?limit|resource.?exhausted/i.test(message)) {
+    const retryMatch = message.match(/retry in\s+([0-9.]+)\s*s/i);
+    const delaySeconds = retryMatch ? Number(retryMatch[1]) : 3600;
+    geminiCooldownUntil = Date.now() + Math.min(Math.max(delaySeconds, 60), 24 * 60 * 60) * 1000;
+    console.warn("⏸️ Gemini quota/rate limit detected; AI calls paused temporarily.");
+  }
+}
+
+function getCachedAIResult(key) {
+  const item = AI_RESULT_CACHE.get(key);
+  if (!item) return null;
+  if (Date.now() - item.time > AI_CACHE_TTL_MS) { AI_RESULT_CACHE.delete(key); return null; }
+  return item.value;
+}
+
+function setCachedAIResult(key, value) {
+  if (AI_RESULT_CACHE.size >= AI_CACHE_MAX_ENTRIES) {
+    const firstKey = AI_RESULT_CACHE.keys().next().value;
+    if (firstKey) AI_RESULT_CACHE.delete(firstKey);
+  }
+  AI_RESULT_CACHE.set(key, { time: Date.now(), value });
+}
+
+// Ordinary chat skips the paid/quota-limited AI call. Suspicious text still
+// goes to Gemini; this prefilter is a quota saver, not a guarantee of detection.
+const TEXT_REVIEW_HINTS = /https?:\/\/|www\.|discord\.gg|t\.me\/|free\s+(?:skin|diamonds|currency|gift)|claim\s+(?:now|reward)|click\s+(?:here|link)|dm\s+me|send\s+(?:money|payment|otp|password)|give\s+me\s+(?:your\s+)?(?:password|otp|account)|(?:kill yourself|go die|die now)|(?:nudes?|porn|explicit sexual)|(?:scam|phishing|hack(?:ed|ing)?|steal your account)|(?:putang ina|gago ka|tangina|bobo ka|ulol ka)/i;
+function needsAITextReview(text) { return Boolean(text && text.trim().length >= 8 && TEXT_REVIEW_HINTS.test(text)); }
+
+// ============================================================
+// SECTION 04 — DISCORD CLIENT
+// ============================================================
+
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMessageReactions,
+  ],
+  partials: [
+    Partials.Channel,
+    Partials.Message,
+    Partials.Reaction,
+    Partials.User,
+  ],
+});
+
+// ============================================================
+// SECTION 05 — RUNTIME CONSTANTS AND STATE
+// ============================================================
+const MODERATION_TIMEOUT_MINUTES = 0;
+const REPEATED_VIOLATION_TIMEOUT_MINUTES = 0;
+const SERIOUS_VIOLATION_TIMEOUT_MINUTES = 60;
+const SPAM_TIMEOUT_MINUTES = 1;
+const GOLD = "#D4AF37";
+const AVISALA = "<a:Avisala:1542448826265243660>";
+const SPAM_WINDOW_MS = 10_000;
+const SPAM_MESSAGE_THRESHOLD = 5;
+const SPAM_PENALTY_COOLDOWN_MS = 60_000;
+
+// ============================================================
+// SECTION 06 — CHANNEL RULES
+// ============================================================
 const CHANNEL_RULES = {
   "1544771901308796929": {
     type: "profile",
@@ -165,7 +258,10 @@ const CHANNEL_RULES = {
 };
 
 
-
+// ============================================================
+// SECTION 07 — PINNED MESSAGE CONFIGURATION
+// ============================================================
+const PINNED_MARKER = "📌 READ TOPIC !";
 const PINNED_TITLES = {
   profile: `${AVISALA} PROFILE SHOWCASE`,
   skin: `${AVISALA} SKIN SHOWCASE`,
@@ -178,116 +274,42 @@ const PINNED_TITLES = {
 };
 
 
-
-
-
-if (!TOKEN) throw new Error("Missing DISCORD_TOKEN.");
-if (!CLIENT_ID) throw new Error("Missing CLIENT_ID.");
-if (!GUILD_ID) throw new Error("Missing GUILD_ID.");
-
-if (!GEMINI_API_KEY) {
-  console.warn("⚠️ GEMINI_API_KEY is not configured. Image AI moderation will be unavailable.");
-}
-
-// ============================================================
-// SECTION 02 — SHARED HELPERS AND FOOTER
-// ============================================================
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-// ============================================================
-// SECTION 03 — GEMINI AI AND QUOTA PROTECTION
-// ============================================================
-
-const genAI = GEMINI_API_KEY
-  ? new GoogleGenerativeAI(GEMINI_API_KEY)
-  : null;
-
-// AI quota protection: stop repeated requests after Gemini reports quota/rate limiting.
-let geminiCooldownUntil = 0;
-const AI_RESULT_CACHE = new Map();
-const AI_CACHE_TTL_MS = 10 * 60 * 1000;
-const AI_CACHE_MAX_ENTRIES = 500;
-const MAX_IMAGES_TO_SCAN_PER_MESSAGE = 3;
-const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
-
-function isGeminiCoolingDown() { return Date.now() < geminiCooldownUntil; }
-
-function noteGeminiError(error) {
-  const message = String(error?.message || error || "");
-  if (/429|quota|rate.?limit|resource.?exhausted/i.test(message)) {
-    const retryMatch = message.match(/retry in\s+([0-9.]+)\s*s/i);
-    const delaySeconds = retryMatch ? Number(retryMatch[1]) : 3600;
-    geminiCooldownUntil = Date.now() + Math.min(Math.max(delaySeconds, 60), 24 * 60 * 60) * 1000;
-    console.warn("⏸️ Gemini quota/rate limit detected; AI calls paused temporarily.");
-  }
-}
-
-function getCachedAIResult(key) {
-  const item = AI_RESULT_CACHE.get(key);
-  if (!item) return null;
-  if (Date.now() - item.time > AI_CACHE_TTL_MS) { AI_RESULT_CACHE.delete(key); return null; }
-  return item.value;
-}
-
-function setCachedAIResult(key, value) {
-  if (AI_RESULT_CACHE.size >= AI_CACHE_MAX_ENTRIES) {
-    const firstKey = AI_RESULT_CACHE.keys().next().value;
-    if (firstKey) AI_RESULT_CACHE.delete(firstKey);
-  }
-  AI_RESULT_CACHE.set(key, { time: Date.now(), value });
-}
-
-// Ordinary chat skips the paid/quota-limited AI call. Suspicious text still
-// goes to Gemini; this prefilter is a quota saver, not a guarantee of detection.
-const TEXT_REVIEW_HINTS = /https?:\/\/|www\.|discord\.gg|t\.me\/|free\s+(?:skin|diamonds|currency|gift)|claim\s+(?:now|reward)|click\s+(?:here|link)|dm\s+me|send\s+(?:money|payment|otp|password)|give\s+me\s+(?:your\s+)?(?:password|otp|account)|(?:kill yourself|go die|die now)|(?:nudes?|porn|explicit sexual)|(?:scam|phishing|hack(?:ed|ing)?|steal your account)|(?:putang ina|gago ka|tangina|bobo ka|ulol ka)/i;
-function needsAITextReview(text) { return Boolean(text && text.trim().length >= 8 && TEXT_REVIEW_HINTS.test(text)); }
-
-// ============================================================
-// SECTION 04 — DISCORD CLIENT
-// ============================================================
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMessageReactions,
-  ],
-  partials: [
-    Partials.Channel,
-    Partials.Message,
-    Partials.Reaction,
-    Partials.User,
-  ],
-});
-
-// ============================================================
-// SECTION 05 — RUNTIME CONSTANTS AND STATE
-// ============================================================
-
-// Shared constants are imported from ./config.
-
-
-// ============================================================
-// SECTION 06 — CHANNEL RULES
-// ============================================================
-
-
-
-// ============================================================
-// SECTION 07 — PINNED MESSAGE CONFIGURATION
-// ============================================================
-
-
-
 // ============================================================
 // SECTION 08 — STICKY REMINDER CONFIGURATION
 // ============================================================
-
+const STICKY_MARKER = "\u2063LMP_REMINDER_STICKY\u2063";
+const STICKY_REMINDER_CONFIG = {
+  titles: {
+    profile: `${AVISALA} PROFILE SHOWCASE`,
+    skin: `${AVISALA} SKIN SHOWCASE`,
+    hero: `${AVISALA} HERO HIGHLIGHTS`,
+    "hok-meme": `${AVISALA} HOK MEMES SHARE`,
+    "general-meme": `${AVISALA} STANDPOST MEME SHARE`,
+    code: `${AVISALA} REDEMPTION CODE SHARE`,
+    fanart: `${AVISALA} HOK FAN-ART SHARE`,
+    build: `${AVISALA} HOK STRATEGY FORUM`,
+  },
+  introductions: {
+    profile: "Share your Honor of Kings profile showcase and let the community see your in-game identity, achievements, and progress!",
+    skin: "Share your Honor of Kings skins, previews, collections, and skin-related screenshots!",
+    hero: "Share your Honor of Kings hero highlights and memorable gameplay moments!",
+    "hok-meme": "Share your Honor of Kings memes, funny screenshots, edits, reactions, and parody content!",
+    "general-meme": "Share memes, funny images, reactions, edits, and entertainment with the community!",
+    code: "Share Honor of Kings event codes, redemption screenshots, and helpful redemption information!",
+    fanart: "Share your Honor of Kings fan art, drawings, illustrations, and creative edits!",
+    build: "Share useful Honor of Kings questions, match analysis, builds, tips, and strategies!",
+  },
+  channelRules: {
+    profile: "🚫 Do not reply to other members' showcase posts. Keep this channel dedicated to individual profile showcases. Unrelated content may be removed.",
+    skin: "🚫 Do not reply to other members' showcase posts. Keep this channel dedicated to skin showcases. Unrelated content may be removed.",
+    hero: "🚫 Do not reply to other members' highlight posts. Keep this channel dedicated to hero highlights. Unrelated content may be removed.",
+    "hok-meme": "🚫 Do not use this channel for general chatting. Keep posts related to Honor of Kings memes. Unrelated content may be removed.",
+    "general-meme": "🚫 Do not reply to other members' posts. Keep this channel dedicated to memes and entertainment. Unrelated content may be removed.",
+    code: "🚫 No general chat. Replies are limited to code status (done, used, invalid, expired, not work, error) and brief appreciation such as 'Thank you'. Unrelated content may be removed.",
+    fanart: "🚫 Do not reply to other members' artwork posts. Keep this channel dedicated to fan art and creative works. Unrelated content may be removed.",
+    build: "🚫 Keep posts and discussions related to Honor of Kings strategy. Unrelated content may be removed.",
+  },
+};
 
 // ============================================================
 // SECTION 09 — RUNTIME MEMORY AND RATE LIMITS
@@ -304,10 +326,7 @@ const stickyLastRefreshAt = new Map();
 const recentUserMessages = new Map();
 const activeSpamPenaltyUntil = new Map();
 
-// Anti-spam controls: 5 messages in 10 seconds is a serious violation.
-const SPAM_WINDOW_MS = 10_000;
-const SPAM_MESSAGE_THRESHOLD = 5;
-const SPAM_PENALTY_COOLDOWN_MS = 60_000;
+// Anti-spam controls are defined in Section 05; per-user tracking maps live here.
 
 // ============================================================
 // SECTION 10 — MEDIA HELPERS
@@ -481,37 +500,7 @@ function createPinnedEmbed(rule) {
 }
 
 function createStickyEmbed(rule) {
-  const titles = {
-    profile: `${AVISALA} PROFILE SHOWCASE`,
-    skin: `${AVISALA} SKIN SHOWCASE`,
-    hero: `${AVISALA} HERO HIGHLIGHTS`,
-    "hok-meme": `${AVISALA} HOK MEMES SHARE`,
-    "general-meme": `${AVISALA} STANDPOST MEME SHARE`,
-    code: `${AVISALA} REDEMPTION CODE SHARE`,
-    fanart: `${AVISALA} HOK FAN-ART SHARE`,
-    build: `${AVISALA} HOK STRATEGY FORUM`,
-  };
-  const introductions = {
-    profile: "Share your Honor of Kings profile showcase and let the community see your in-game identity, achievements, and progress!",
-    skin: "Share your Honor of Kings skins, previews, collections, and skin-related screenshots!",
-    hero: "Share your Honor of Kings hero highlights and memorable gameplay moments!",
-    "hok-meme": "Share your Honor of Kings memes, funny screenshots, edits, reactions, and parody content!",
-    "general-meme": "Share memes, funny images, reactions, edits, and entertainment with the community!",
-    code: "Share Honor of Kings event codes, redemption screenshots, and helpful redemption information!",
-    fanart: "Share your Honor of Kings fan art, drawings, illustrations, and creative edits!",
-    build: "Share useful Honor of Kings questions, match analysis, builds, tips, and strategies!",
-  };
-  const channelRules = {
-    profile: "🚫 Do not reply to other members' showcase posts. Keep this channel dedicated to individual profile showcases. Unrelated content may be removed.",
-    skin: "🚫 Do not reply to other members' showcase posts. Keep this channel dedicated to skin showcases. Unrelated content may be removed.",
-    hero: "🚫 Do not reply to other members' highlight posts. Keep this channel dedicated to hero highlights. Unrelated content may be removed.",
-    "hok-meme": "🚫 Do not use this channel for general chatting. Keep posts related to Honor of Kings memes. Unrelated content may be removed.",
-    "general-meme": "🚫 Do not reply to other members' posts. Keep this channel dedicated to memes and entertainment. Unrelated content may be removed.",
-    code: "🚫 No general chat. Replies are limited to code status (done, used, invalid, expired, not work, error) and brief appreciation such as 'Thank you'. Unrelated content may be removed.",
-    fanart: "🚫 Do not reply to other members' artwork posts. Keep this channel dedicated to fan art and creative works. Unrelated content may be removed.",
-    build: "🚫 Keep posts and discussions related to Honor of Kings strategy. Unrelated content may be removed.",
-  };
-
+  const { titles, introductions, channelRules } = STICKY_REMINDER_CONFIG;
   const embed = new EmbedBuilder()
     .setColor(GOLD)
     .setTitle("📢 READ REMINDER!")
@@ -826,8 +815,7 @@ async function askGeminiImage(imageUrl, channelType) {
   }
 }
 
-// TEXT SERIOUS-CONTENT CHECK — GEMINI
-// ============================================================
+// Serious-text scan helper
 
 async function checkTextForSeriousViolation(message) {
   const text = message.content?.trim() || "";
@@ -856,6 +844,10 @@ async function checkTextForSeriousViolation(message) {
     return { serious: false, reason: "", unavailable: true };
   }
 }
+
+// ============================================================
+// SECTION 17 — MESSAGE VALIDATION AND CHANNEL ROUTING
+// ============================================================
 
 // VALIDATION HELPERS
 // ============================================================
@@ -893,9 +885,6 @@ async function scanMessageImages(images, channelType) {
   return { serious: false, rejected: false, reason: results.some(r => r.status === "unknown") ? "Scanner inconclusive; media retained." : "Image check completed." };
 }
 
-// ============================================================
-// SECTION 17 — MESSAGE VALIDATION AND CHANNEL ROUTING
-// ============================================================
 
 async function validateMessage(message, rule) {
   const images = getImages(message);
@@ -954,10 +943,9 @@ async function validateMessage(message, rule) {
         const scan = await scanMessageImages(images, "general-meme");
         if (scan.serious) return { allowed: false, serious: true, reason: scan.reason };
       }
-      return { allowed: true, serious: false, reason: "Accepted." };
+      return { allowed: true, serious: false, reason: "Meme/media submission accepted." };
     }
-    if (message.content.trim()) return { allowed: true, serious: false, reason: "Text accepted." };
-    return { allowed: false, serious: false, reason: "Empty message." };
+    return { allowed: false, serious: false, reason: "Casual text, emoji-only, sticker-only, or unrelated chat is not allowed in Standpost Meme Share. Submit a meme image or video instead." };
   }
 
   if (rule.type === "profile") {
@@ -1039,8 +1027,14 @@ async function validateMessage(message, rule) {
 }
 
 // ============================================================
-// MODERATION — SIMPLIFIED: ONLY SERIOUS = ACTION
+// SECTION 18 — MESSAGE EVENT HANDLERS AND SPAM DETECTION
 // ============================================================
+
+// ============================================================
+// SECTION 18A — ADMIN MOD LOG (PRIVATE AUDIT)
+// ============================================================
+// Preserve the full audit trail for staff: member, channel, reason, context,
+// suggested correction, action taken, original content, and message ID.
 
 async function sendModerationLog(embed, memberId = null) {
   // Private MOD LOG: staff-only channel configured with MOD_LOG_CHANNEL_ID.
@@ -1060,6 +1054,10 @@ async function sendModerationLog(embed, memberId = null) {
   } catch (e) { console.error("❌ MOD LOG send failed:", e.message); }
 }
 
+// ============================================================
+// SECTION 18B — PUBLIC REMINDER LOG (MEMBER-FACING)
+// ============================================================
+// This is intentionally a separate, concise log; it is not an audit copy.
 async function sendReminderLog(embed, memberId = null) {
   // Public/member-facing REMINDER LOG: separate from the private staff MOD LOG.
   if (!REMINDER_LOG_CHANNEL_ID) {
@@ -1190,15 +1188,36 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
     .setTimestamp();
 
   // PUBLIC REMINDER LOG: concise member-facing notice, deliberately not an audit copy.
-  const publicNextStep = serious
-    ? "Please stop this behavior and contact a moderator if you believe this was a mistake."
-    : (details.color === "#FF8C00"
-        ? "Please check the channel topic and submit media that matches its requirements."
-        : "Please keep messages relevant to the channel and follow its posting rules.");
+  let publicCorrection = "Review the channel topic and repost in the required format.";
+  const reasonLower = details.reasonText.toLowerCase();
+  if (serious) {
+    if (/nsfw|sexual|porn|nude|explicit/.test(reasonLower)) publicCorrection = "Do not repost sexualized or NSFW content. Contact a moderator if you believe this was a mistake.";
+    else if (/spam|repeated|messages within/.test(reasonLower)) publicCorrection = "Stop repeated posting. Send one message at a time and follow moderator instructions.";
+    else publicCorrection = "Stop the prohibited behavior and review the server rules.";
+  } else if (details.color === "#FF8C00") {
+    if (/fan.?art/.test(reasonLower)) publicCorrection = "Submit an image of your own Honor of Kings-related artwork. Text or video alone is not enough.";
+    else if (/skin/.test(reasonLower)) publicCorrection = "Submit an image or video clearly showing an Honor of Kings skin.";
+    else if (/hero|highlight/.test(reasonLower)) publicCorrection = "Submit your own Honor of Kings gameplay highlight video.";
+    else publicCorrection = "Submit media that matches this channel's topic and format.";
+  } else if (/code|redemption/.test(reasonLower)) {
+    publicCorrection = "Post an event code or redemption screenshot. Replies may only contain a code status or brief appreciation.";
+  } else if (/fan.?art/.test(reasonLower)) {
+    publicCorrection = "Post your own Honor of Kings-related artwork image as a new message.";
+  } else if (/profile/.test(reasonLower)) {
+    publicCorrection = "Post your own Honor of Kings profile/account image or video as a new message.";
+  } else if (/skin/.test(reasonLower)) {
+    publicCorrection = "Post an image/video showing an Honor of Kings skin as a new message.";
+  } else if (/hero|highlight/.test(reasonLower)) {
+    publicCorrection = "Post your own Honor of Kings gameplay highlight video.";
+  } else if (/comment|reply/.test(reasonLower)) {
+    publicCorrection = "Do not reply to other members' showcase posts; create your own on-topic post.";
+  } else if (/emoji|sticker|chat|text-only|unrelated|casual/.test(reasonLower)) {
+    publicCorrection = "Do not post casual chat, emoji/sticker-only messages, or unrelated text here. Submit content intended for this channel.";
+  }
   const reminderEmbed = new EmbedBuilder()
     .setColor(details.color)
     .setTitle(details.title)
-    .setDescription(`${commonDescription}\\n\\n**Reason:** ${details.reasonText.slice(0, 700)}\\n\\n**Next step:** ${publicNextStep}`)
+    .setDescription(`${commonDescription}\n\n**Reason for removal:** ${details.reasonText.slice(0, 650)}\n\n**Correction to pass:** ${publicCorrection.slice(0, 650)}`)
     .setTimestamp();
 
   await Promise.all([
@@ -1267,9 +1286,7 @@ async function refreshStickyAfterMessage(channel, rule) {
   await ensureSticky(channel, rule, true);
 }
 
-// ============================================================
-// SECTION 18 — MESSAGE EVENT HANDLERS AND SPAM DETECTION
-// ============================================================
+
 
 client.on("messageCreate", async (message) => {
   try {
@@ -1304,14 +1321,8 @@ client.on("messageCreate", async (message) => {
 
     const processed = await processMessage(message, rule);
 
-    // Code Share: preserve the existing helpful replies, but never send warnings or DMs.
-    if (processed.action === "allowed" && rule.type === "code" && message.reference) {
-      if (isAppreciationReply(message.content)) {
-        await message.reply({ content: "You're welcome! Happy to help!" }).catch(() => {});
-      } else if (isAllowedCodeReply(message.content)) {
-        await message.reply({ content: "Thank you! Your response has been noted." }).catch(() => {});
-      }
-    }
+    // Code Share: allowed status/appreciation replies stay silent.
+    // Do not post public bot messages such as "Thank you" or "response noted".
   } catch (e) { console.error("❌ messageCreate error:", e); }
 });
 
