@@ -1796,61 +1796,38 @@ process.on("SIGTERM", async () => {
   process.exit(0);
 });
 
-// ============================================================
-// SECTION 23 — RENDER HEALTH SERVER AND DISCORD LOGIN
-// ============================================================
+ // ============================================================
+ // SECTION 23 — RENDER HEALTH SERVER AND DISCORD LOGIN
+ // ============================================================
 
-// Render supplies PORT automatically.
-// The fallback is useful when running locally.
 const PORT = Number(process.env.PORT) || 10000;
+const http = require("node:http");
 
-// Keep the HTTP health server independent of Discord readiness.
-// IMPORTANT: Ensure there is only ONE health server in index.js.
-const healthServer = require("http").createServer((req, res) => {
-  const pathname = new URL(
-    req.url || "/",
-    "http://localhost"
-  ).pathname;
+const healthServer = http.createServer((req, res) => {
+  const pathname = new URL(req.url || "/", "http://localhost").pathname;
+  const ready = client.isReady();
 
-  const discordReady = client.isReady();
+  const status = pathname === "/discord-health" && !ready ? 503 : 200;
 
-  if (req.method === "GET" && pathname === "/health") {
-    res.writeHead(200, {
+  if (req.method === "GET" &&
+      (pathname === "/health" || pathname === "/discord-health")) {
+    res.writeHead(status, {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store",
     });
 
     return res.end(JSON.stringify({
-      status: "ok",
+      status: ready ? "ok" : "degraded",
       process: "running",
-      discord: discordReady ? "ready" : "starting_or_disconnected",
+      discord: ready ? "ready" : "starting_or_disconnected",
       uptimeSeconds: Math.floor(process.uptime()),
     }));
   }
 
-  if (req.method === "GET" && pathname === "/discord-health") {
-    res.writeHead(discordReady ? 200 : 503, {
-      "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "no-store",
-    });
-
-    return res.end(JSON.stringify({
-      status: discordReady ? "ok" : "degraded",
-      discord: discordReady ? "ready" : "disconnected_or_starting",
-      uptimeSeconds: Math.floor(process.uptime()),
-    }));
-  }
-
-  res.writeHead(200, {
-    "Content-Type": "text/plain; charset=utf-8",
-    "Cache-Control": "no-store",
-  });
-
-  return res.end("LAMPOON Reminder Bot process is running.");
+  res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+  res.end("LAMPOON Reminder Bot process is running.");
 });
 
-// Start listening BEFORE attempting Discord login.
-// This allows Render to detect the HTTP port even if Discord is slow.
 healthServer.on("error", (error) => {
   console.error("❌ Render health server error:", error);
 });
@@ -1859,10 +1836,31 @@ healthServer.listen(PORT, "0.0.0.0", () => {
   console.log(`🌐 Render health server running on port ${PORT}`);
 });
 
-console.log("🔎 Checking Discord token configuration:", {
-  tokenPresent: Boolean(TOKEN),
-  tokenType: typeof TOKEN,
-});
+console.log("🔎 Discord token configured:", Boolean(TOKEN));
+
+if (!TOKEN) {
+  console.error("❌ Missing TOKEN. Check Render's DISCORD_TOKEN environment variable.");
+} else {
+  const readyWarning = setTimeout(() => {
+    if (!client.isReady()) {
+      console.error(
+        "⏰ Discord has not reached READY after 30 seconds. " +
+        "Check login, intents, and shard/Gateway logs."
+      );
+    }
+  }, 30_000);
+
+  client.once("clientReady", () => {
+    clearTimeout(readyWarning);
+  });
+
+  client.login(TOKEN).then(() => {
+    console.log("🔐 Discord login accepted; waiting for Gateway READY.");
+  }).catch((error) => {
+    clearTimeout(readyWarning);
+    console.error("❌ Discord login failed:", error);
+  });
+}
 
 if (!TOKEN) {
   console.error(
@@ -1878,7 +1876,6 @@ if (!TOKEN) {
     console.error("❌ Discord login failed:", error);
   });
 }
-
 
 // ============================================================
 // SECTION 24 — MAINTENANCE NOTES AND SAFETY GUARANTEES
