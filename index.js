@@ -892,13 +892,8 @@ async function validateMessage(message, rule) {
   const images = getImages(message);
   const videos = getVideos(message);
 
-  // Do not let a text-only AI false positive delete a photo/video with a caption.
-  if (images.length === 0 && videos.length === 0) {
-    const seriousText = await checkTextForSeriousViolation(message);
-    if (seriousText.serious) return { allowed: false, serious: true, reason: seriousText.reason };
-  }
-
-  // Block replies where not allowed and explain how to post correctly.
+  // Block rule-based reply violations before any AI scam/safety review.
+  // The deleted reply text remains the Message field in the audit embed.
   if (message.reference && !rule.allowReplies) {
     const channelLabel = ({
       profile: "Profile Showcase",
@@ -916,10 +911,52 @@ async function validateMessage(message, rule) {
       "general-meme": "Post your own meme as a new message instead of replying to another member.",
       fanart: "Post your own Honor of Kings-related artwork image as a new message.",
     })[rule.type] || "Create a new on-topic post instead of replying.";
-    return { allowed: false, serious: false, reason: `Comment/reply in ${channelLabel} is not allowed. ${requirement}` };
+    return { allowed: false, serious: false, reason: `Replying is not allowed in ${channelLabel}. ${requirement}` };
   }
 
   const hasMedia = images.length > 0 || videos.length > 0;
+  const contentForRules = String(message.content || '').trim();
+  const hasSticker = Boolean(message.stickers?.size);
+  const isShowcaseRule = ['profile', 'skin', 'hero', 'hok-meme', 'general-meme', 'fanart'].includes(rule.type);
+  const hasEmojiToken = /^(?:\p{Extended_Pictographic}|\p{Emoji_Presentation}|\uFE0F|\u200D|\s|<a?:[a-zA-Z0-9_]+:\d+>)+$/u.test(contentForRules);
+  const hasAnimatedEmoji = /<a:[a-zA-Z0-9_]+:\d+>/.test(contentForRules);
+  const hasGifAttachment = [...(message.attachments?.values?.() || [])].some(a => /\.gif$/i.test(a.name || '') || /image\/gif/i.test(a.contentType || ''));
+  const hasVoiceAttachment = [...(message.attachments?.values?.() || [])].some(a => /audio\/|voice-message/i.test(a.contentType || '') || /\.(ogg|opus|mp3|wav|m4a)$/i.test(a.name || ''));
+
+  // Deterministic rule-based reasons run before AI. These are ordinary channel
+  // format corrections, not scam detection, and never receive a generic label.
+  if (isShowcaseRule && !hasMedia && !containsPossibleCode(contentForRules)) {
+    const requirement = ({
+      profile: 'Post your own Honor of Kings profile/account image or video as a new message.',
+      skin: 'Post your own image/video clearly showing an Honor of Kings skin as a new message.',
+      hero: 'Upload your own Honor of Kings gameplay highlight video as a new message.',
+      'hok-meme': 'Post your own Honor of Kings-related meme image or video as a new message.',
+      'general-meme': 'Post a meme image or video as a new message.',
+      fanart: 'Post your own Honor of Kings-related artwork image as a new message.'
+    })[rule.type];
+    let specificReason = '';
+    if (hasVoiceAttachment) specificReason = 'Voice messages are not allowed in this submission channel.';
+    else if (hasGifAttachment) specificReason = 'GIF submissions are not accepted as the required channel format.';
+    else if (hasSticker || (!contentForRules && message.stickers?.size)) specificReason = 'Stickers are not allowed as a standalone submission.';
+    else if (hasAnimatedEmoji) specificReason = 'Animated emojis are not allowed as standalone messages.';
+    else if (hasEmojiToken && contentForRules) specificReason = 'Emoji-only messages are not allowed in this channel.';
+    else if (!contentForRules && !hasSticker) return { allowed: true, serious: false, reason: 'Empty message with no visible content; retained.' };
+    else if (/^(hi|hello|hey|heya|yo|sup|good morning|good night|good evening|good afternoon)[!.\s]*$/i.test(contentForRules)) specificReason = 'Casual chatting is not allowed in this submission channel.';
+    else if (/^(lol|lmao|haha+|hehe+|nice|cool|wow|same|true|fr|ikr|bruh|okay|ok|thanks|thank you)[!.\s]*$/i.test(contentForRules)) specificReason = 'Small talk is not allowed in this submission channel.';
+    else if (/^(that's cool|thats cool|looks good|great post|amazing|so cool|i agree|well said)[!.\s]*$/i.test(contentForRules)) specificReason = 'Small-talk or reaction text is not allowed as a standalone submission.';
+    else if (/https?:\/\/|www\./i.test(contentForRules)) specificReason = 'Unrelated link-only conversation is not a valid channel submission.';
+    else if (contentForRules) specificReason = rule.type === 'general-meme' || rule.type === 'hok-meme'
+      ? 'Unrelated conversation is not allowed; submit a meme image or video instead.'
+      : `Wrong submission format: this channel requires the appropriate media, not text-only conversation. ${requirement}`;
+    if (specificReason) return { allowed: false, serious: false, reason: `${specificReason} ${requirement}` };
+  }
+
+  // Only run serious-text AI review after deterministic format/reply rules.
+  // Do not let a text-only AI false positive delete a photo/video with a caption.
+  if (images.length === 0 && videos.length === 0 && !hasVoiceAttachment && !hasGifAttachment) {
+    const seriousText = await checkTextForSeriousViolation(message);
+    if (seriousText.serious) return { allowed: false, serious: true, reason: seriousText.reason };
+  }
   const hasCode = containsPossibleCode(message.content);
   const isOnlyText = !hasMedia && !hasCode && message.content.trim().length > 0;
 
@@ -1148,7 +1185,7 @@ function getRemovalLogDetails(message, reason, serious, actionTaken) {
   const hasAttachments = Boolean(message.attachments?.size);
   const hasMedia = hasAttachments;
   const color = serious ? "#FF3030" : (hasMedia ? "#FF8C00" : "#FFD700");
-  const title = serious ? "🔴 SERIOUS VIOLATION" : (hasMedia ? "🟠 MEDIA SUBMISSION REMOVED" : "🟡 CONTENT CORRECTION REQUIRED");
+  const title = serious ? "🔴 ACTION VIOLATION" : (hasMedia ? "🟠 MEDIA CORRECTION" : "🟡 MESSAGE REMOVE");
   let why;
   let requiredAction;
 
@@ -1208,6 +1245,9 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
     if (/fan.?art/.test(reasonLower)) publicCorrection = "Submit an image of your own Honor of Kings-related artwork. Text or video alone is not enough.";
     else if (/skin/.test(reasonLower)) publicCorrection = "Submit an image or video clearly showing an Honor of Kings skin.";
     else if (/hero|highlight/.test(reasonLower)) publicCorrection = "Submit your own Honor of Kings gameplay highlight video.";
+    else if (/gif/.test(reasonLower)) publicCorrection = "Do not use a GIF for this submission. Upload the required image or video in a supported format for this channel.";
+    else if (/voice message|audio/.test(reasonLower)) publicCorrection = "Voice/audio messages are not valid submissions here. Upload the image or video required by the channel topic.";
+    else if (/not.*match|does not match|not a .*meme|not .*fan.?art|rejected/i.test(reasonLower)) publicCorrection = "Replace the rejected media with content that clearly matches this channel's topic and requirements.";
     else publicCorrection = "Submit media that matches this channel's topic and format.";
   } else if (/code|redemption/.test(reasonLower)) {
     publicCorrection = "Post an event code or redemption screenshot. Replies may only contain a code status or brief appreciation.";
@@ -1221,13 +1261,37 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
     publicCorrection = "Post your own Honor of Kings gameplay highlight video.";
   } else if (/comment|reply/.test(reasonLower)) {
     publicCorrection = "Do not reply to other members' showcase posts; create your own on-topic post.";
+  } else if (/animated emoji/.test(reasonLower)) {
+    publicCorrection = "Do not send animated emoji-only messages. Post the channel's required content as a new message.";
+  } else if (/emoji-only|emojis/.test(reasonLower)) {
+    publicCorrection = "Emoji-only messages are not accepted. Post the channel's required content as a new message.";
+  } else if (/sticker/.test(reasonLower)) {
+    publicCorrection = "Sticker-only messages are not accepted. Post the channel's required content as a new message.";
+  } else if (/gif/.test(reasonLower)) {
+    publicCorrection = "Use the required channel format instead of a GIF-only submission.";
+  } else if (/voice message/.test(reasonLower)) {
+    publicCorrection = "Do not send voice messages here. Submit the content and media format listed in the channel topic.";
+  } else if (/replying|reply|comment/.test(reasonLower)) {
+    publicCorrection = "Do not reply to another member here. Create your own qualifying submission as a new message.";
+  } else if (/small talk/.test(reasonLower)) {
+    publicCorrection = "Small talk is not accepted here. Submit the content required by the channel topic.";
+  } else if (/casual chatting|casual chat/.test(reasonLower)) {
+    publicCorrection = "Casual chatting is not allowed here. Submit the content required by the channel topic.";
+  } else if (/unrelated conversation|unrelated link/.test(reasonLower)) {
+    publicCorrection = "Keep the post relevant to this channel and submit the required content in the correct format.";
+  } else if (/wrong submission format|text-only/.test(reasonLower)) {
+    publicCorrection = "Post the required image or video as a new message, following the channel topic.";
   } else if (/emoji|sticker|chat|text-only|unrelated|casual/.test(reasonLower)) {
     publicCorrection = "Do not post casual chat, emoji/sticker-only messages, or unrelated text here. Submit content intended for this channel.";
   }
+  // Keep the three main reminder headers exact. Include the actual offending
+  // text so members can understand which message needs correcting; for media-
+  // only submissions, the fallback makes it clear that there was no text body.
+  const offendingMessage = content || "[No text content — media, sticker, or attachment submission]";
   const reminderEmbed = new EmbedBuilder()
     .setColor(details.color)
     .setTitle(details.title)
-    .setDescription(`${commonDescription}\n\n**Reason for removal:** ${details.reasonText.slice(0, 650)}\n\n**Correction to pass:** ${publicCorrection.slice(0, 650)}`)
+    .setDescription(`${commonDescription}\n\n**Message that triggered this notice:**\n${offendingMessage.slice(0, 650)}\n\n**Specific reason:** ${details.reasonText.slice(0, 650)}\n\n**Correction to pass:** ${publicCorrection.slice(0, 650)}`)
     .setTimestamp();
 
   await Promise.all([
@@ -1643,15 +1707,15 @@ client.once("clientReady", async () => {
   console.log(`🌍 Tagalog support: ✅ Enabled`);
   console.log(`🧯 AI quota protection: suspicious-text prefilter, result cache, cooldown enabled`);
   console.log(`📌 Event Code Share gets a pinned direction embed and one reminder sticky; forums use a guide post only`);
-  console.log(`🛡️ Safe historical cleanup enabled: only text-only chat violations; media submissions are preserved`);
+  console.log(`🛡️ Historical message cleanup is disabled; existing channel history will not be mass-deleted on startup.`);
   console.log(`🎭 LAMPOON Reminder Bot is online.`);
   console.log("========================================");
 
   await registerCommands();
   await initializeChannels();
-  // Run in the background so sticky initialization and Discord readiness are
-  // not held hostage by a long history scan.
-  cleanupHistoricalChat().catch(error => console.error('❌ Safe historical cleanup failed:', error));
+  // Historical cleanup is deliberately disabled. A startup scan that deletes
+  // old text-only messages can remove legitimate history and cause surprise
+  // bulk moderation. Only new messages go through the live moderation pipeline.
 });
 
 client.on("shardResume", async (shardId, replayedEvents) => {
