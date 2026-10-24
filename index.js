@@ -1668,8 +1668,8 @@ process.on("SIGTERM", () => {
 // SECTION 23 — RENDER HEALTH CHECK AND DISCORD LOGIN
 // ============================================================
 // Render supplies PORT automatically. UptimeRobot can monitor /health.
-// /health only succeeds when the Discord Gateway is actually ready, not merely
-// when this HTTP process is alive. A 503 lets monitoring detect an offline bot.
+// /health confirms the HTTP process is alive for Render deployment readiness.
+// /discord-health reports the actual Discord Gateway state for external monitoring.
 // Render Free may still sleep; an HTTP health check cannot guarantee 24/7 uptime.
 const PORT = Number(process.env.PORT) || 10000;
 const healthServer = http.createServer((req, res) => {
@@ -1681,7 +1681,24 @@ const healthServer = http.createServer((req, res) => {
     return res.end("Bad Request");
   }
 
+  // Render's deployment health check must confirm the HTTP process has started.
+  // Do not make deployment readiness depend on Discord Gateway timing; a slow
+  // Discord connection otherwise causes Render to time out and restart the app.
   if (req.method === "GET" && pathname === "/health") {
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    return res.end(JSON.stringify({
+      status: "ok",
+      process: "running",
+      discord: client.isReady() ? "ready" : "starting_or_disconnected",
+      uptimeSeconds: Math.floor(process.uptime()),
+    }));
+  }
+
+  // Use /discord-health for monitoring the actual Discord Gateway state.
+  if (req.method === "GET" && pathname === "/discord-health") {
     const discordReady = client.isReady();
     res.writeHead(discordReady ? 200 : 503, {
       "Content-Type": "application/json; charset=utf-8",
