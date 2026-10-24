@@ -1624,11 +1624,12 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
-// ============================================================
-// SECTION 21 — BOT STARTUP AND READY EVENT
-// ============================================================
 
-client.once("clientReady", async () => {
+ // ============================================================
+ // SECTION 21 — BOT STARTUP AND READY EVENT
+ // ============================================================
+
+client.once("ready", async () => {
   console.log("🔐 Discord Gateway READY event received.");
   console.log("========================================");
   console.log(`🤖 Logged in as ${client.user.tag}`);
@@ -1636,27 +1637,42 @@ client.once("clientReady", async () => {
   console.log(`⏱️ Thresholds: Spam=${SPAM_TIMEOUT_MINUTES}m (Code Share/Forum exempt) | Moderate=${MODERATION_TIMEOUT_MINUTES}m | Repeated=${REPEATED_VIOLATION_TIMEOUT_MINUTES}m | Serious=${SERIOUS_VIOLATION_TIMEOUT_MINUTES}m`);
   console.log(`🧠 Gemini model: ${GEMINI_MODEL}`);
   console.log(`📷 Image moderation: ${genAI ? "✅ Enabled (up to 3 images/message)" : "⚠️ Not configured"}`);
-  console.log(`🌍 Tagalog support: ✅ Enabled`);
-  console.log(`🧯 AI quota protection: suspicious-text prefilter, result cache, cooldown enabled`);
-  console.log(`📌 Event Code Share gets a pinned direction embed and one reminder sticky; forums use a guide post only`);
-  console.log(`🛡️ Safe historical cleanup enabled: only text-only chat violations; media submissions are preserved`);
-  console.log(`🎭 LAMPOON Reminder Bot is online.`);
+  console.log("🌍 Tagalog support: ✅ Enabled");
+  console.log("🧯 AI quota protection: suspicious-text prefilter, result cache, cooldown enabled");
+  console.log("📌 Event Code Share gets a pinned direction embed and one reminder sticky; forums use a guide post only");
+  console.log("🛡️ Safe historical cleanup enabled: only text-only chat violations; media submissions are preserved");
+  console.log("🎭 LAMPOON Reminder Bot is online.");
   console.log("========================================");
 
-  await registerCommands();
-  await initializeChannels();
-  // Run in the background so sticky initialization and Discord readiness are
-  // not held hostage by a long history scan.
-  cleanupHistoricalChat().catch(error => console.error('❌ Safe historical cleanup failed:', error));
+  try {
+    await registerCommands();
+    await initializeChannels();
+
+    // Keep historical cleanup from blocking startup.
+    cleanupHistoricalChat().catch((error) => {
+      console.error("❌ Safe historical cleanup failed:", error);
+    });
+  } catch (error) {
+    console.error("❌ Bot startup initialization failed:", error);
+  }
 });
 
 client.on("shardResume", async (shardId, replayedEvents) => {
-  console.log(`🔄 Discord Gateway shard ${shardId} resumed (${replayedEvents} events replayed).`);
-  await recoverStickyReminders();
+  console.log(
+    `🔄 Discord Gateway shard ${shardId} resumed (${replayedEvents} events replayed).`
+  );
+
+  try {
+    await recoverStickyReminders();
+  } catch (error) {
+    console.error("❌ Sticky recovery after shard resume failed:", error);
+  }
 });
 
 client.on("shardDisconnect", (closeEvent, shardId) => {
-  console.warn(`⚠️ Discord Gateway shard ${shardId} disconnected (code ${closeEvent?.code ?? "unknown"}${closeEvent?.reason ? `, reason: ${closeEvent.reason}` : ""}).`);
+  console.warn(
+    `⚠️ Discord Gateway shard ${shardId} disconnected (code ${closeEvent?.code ?? "unknown"}${closeEvent?.reason ? `, reason: ${closeEvent.reason}` : ""}).`
+  );
 });
 
 client.on("shardReconnecting", (shardId) => {
