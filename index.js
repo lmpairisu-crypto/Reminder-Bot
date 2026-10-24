@@ -1692,81 +1692,158 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
-// ============================================================
-// SECTION 21 — BOT STARTUP AND READY EVENT
-// ============================================================
 
-client.once("clientReady", async () => {
+ // ============================================================
+ // SECTION 21 — BOT STARTUP AND READY EVENT
+ // ============================================================
+
+client.once("ready", async () => {
   console.log("🔐 Discord Gateway READY event received.");
   console.log("========================================");
   console.log(`🤖 Logged in as ${client.user.tag}`);
   console.log(`🏠 Connected to ${client.guilds.cache.size} guild(s)`);
-  console.log(`⏱️ Thresholds: Spam=${SPAM_TIMEOUT_MINUTES}m (Code Share/Forum exempt) | Moderate=${MODERATION_TIMEOUT_MINUTES}m | Repeated=${REPEATED_VIOLATION_TIMEOUT_MINUTES}m | Serious=${SERIOUS_VIOLATION_TIMEOUT_MINUTES}m`);
+  console.log(
+    `⏱️ Thresholds: Spam=${SPAM_TIMEOUT_MINUTES}m (Code Share/Forum exempt) | ` +
+    `Moderate=${MODERATION_TIMEOUT_MINUTES}m | ` +
+    `Repeated=${REPEATED_VIOLATION_TIMEOUT_MINUTES}m | ` +
+    `Serious=${SERIOUS_VIOLATION_TIMEOUT_MINUTES}m`
+  );
   console.log(`🧠 Gemini model: ${GEMINI_MODEL}`);
-  console.log(`📷 Image moderation: ${genAI ? "✅ Enabled (up to 3 images/message)" : "⚠️ Not configured"}`);
-  console.log(`🌍 Tagalog support: ✅ Enabled`);
-  console.log(`🧯 AI quota protection: suspicious-text prefilter, result cache, cooldown enabled`);
-  console.log(`📌 Event Code Share gets a pinned direction embed and one reminder sticky; forums use a guide post only`);
-  console.log(`🛡️ Historical message cleanup is disabled; existing channel history will not be mass-deleted on startup.`);
-  console.log(`🎭 LAMPOON Reminder Bot is online.`);
+  console.log(
+    `📷 Image moderation: ${genAI ? "✅ Enabled (up to 3 images/message)" : "⚠️ Not configured"}`
+  );
+  console.log("🌍 Tagalog support: ✅ Enabled");
+  console.log("🧯 AI quota protection: suspicious-text prefilter, result cache, cooldown enabled");
+  console.log("📌 Event Code Share uses a pinned direction embed and one reminder sticky; forums use a guide post only");
+  console.log("🛡️ Historical message cleanup is disabled.");
+  console.log("🎭 LAMPOON Reminder Bot is online.");
   console.log("========================================");
 
-  await registerCommands();
-  await initializeChannels();
-  // Historical cleanup is deliberately disabled. A startup scan that deletes
-  // old text-only messages can remove legitimate history and cause surprise
-  // bulk moderation. Only new messages go through the live moderation pipeline.
+  try {
+    await registerCommands();
+    console.log("✅ Slash commands registered.");
+
+    await initializeChannels();
+    console.log("✅ Channel initialization completed.");
+  } catch (error) {
+    console.error("❌ Discord startup initialization failed:", error);
+  }
 });
 
-client.on("shardResume", async (shardId, replayedEvents) => {
-  console.log(`🔄 Discord Gateway shard ${shardId} resumed (${replayedEvents} events replayed).`);
-  await recoverStickyReminders();
-});
-
-client.on("shardDisconnect", (closeEvent, shardId) => {
-  console.warn(`⚠️ Discord Gateway shard ${shardId} disconnected (code ${closeEvent?.code ?? "unknown"}${closeEvent?.reason ? `, reason: ${closeEvent.reason}` : ""}).`);
-});
-
-client.on("shardReconnecting", (shardId) => {
-  console.log(`🔁 Discord Gateway shard ${shardId} is reconnecting...`);
-});
 
 // ============================================================
 // SECTION 22 — ERROR HANDLING AND SHUTDOWN
 // ============================================================
 
-client.on("error", (error) => console.error("❌ Discord Error:", error));
-client.on("warn", (warning) => console.warn("⚠️ Discord Warn:", warning));
-client.on("shardError", (error) => console.error("❌ Shard Error:", error));
-
-process.on("unhandledRejection", (error) => console.error("❌ Unhandled Rejection:", error));
-process.on("uncaughtException", (error) => console.error("❌ Uncaught Exception:", error));
-
-process.on("SIGTERM", () => {
-  console.log("📤 Shutting down gracefully...");
-  client.destroy();
-  process.exit(0);
-});
-
- // ============================================================
- // SECTION 23 — RENDER HEALTH CHECK AND DISCORD LOGIN
- // ============================================================
-
 client.on("error", (error) => {
   console.error("❌ Discord client error:", error);
+});
+
+client.on("warn", (warning) => {
+  console.warn("⚠️ Discord warning:", warning);
 });
 
 client.on("shardError", (error, shardId) => {
   console.error(`❌ Discord shard ${shardId} error:`, error);
 });
 
-client.on("shardDisconnect", (event, shardId) => {
+client.on("shardDisconnect", (closeEvent, shardId) => {
   console.warn(
-    `⚠️ Discord shard ${shardId} disconnected. Code:`,
-    event?.code ?? "unknown",
-    "Reason:",
-    event?.reason || "not provided"
+    `⚠️ Discord shard ${shardId} disconnected. ` +
+    `Code: ${closeEvent?.code ?? "unknown"}. ` +
+    `Reason: ${closeEvent?.reason || "not provided"}`
   );
+});
+
+client.on("shardReconnecting", (shardId) => {
+  console.warn(`🔁 Discord shard ${shardId} reconnecting...`);
+});
+
+client.on("shardResume", async (shardId, replayedEvents) => {
+  console.log(
+    `🔄 Discord shard ${shardId} resumed; ` +
+    `${replayedEvents} event(s) replayed.`
+  );
+
+  try {
+    await recoverStickyReminders();
+  } catch (error) {
+    console.error("❌ Sticky reminder recovery failed:", error);
+  }
+});
+
+process.on("unhandledRejection", (error) => {
+  console.error("❌ Unhandled Promise Rejection:", error);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("❌ Uncaught Exception:", error);
+  // A process in an unknown state should be restarted by the host.
+  // Do not assume it is safe to continue after this error.
+});
+
+
+// ============================================================
+// SECTION 23 — RENDER HEALTH SERVER AND DISCORD LOGIN
+// ============================================================
+
+// Render supplies PORT automatically.
+// The fallback is useful when running locally.
+const PORT = Number(process.env.PORT) || 10000;
+
+// Keep the HTTP health server independent of Discord readiness.
+// IMPORTANT: Ensure there is only ONE health server in index.js.
+const healthServer = require("http").createServer((req, res) => {
+  const pathname = new URL(
+    req.url || "/",
+    "http://localhost"
+  ).pathname;
+
+  const discordReady = client.isReady();
+
+  if (req.method === "GET" && pathname === "/health") {
+    res.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+
+    return res.end(JSON.stringify({
+      status: "ok",
+      process: "running",
+      discord: discordReady ? "ready" : "starting_or_disconnected",
+      uptimeSeconds: Math.floor(process.uptime()),
+    }));
+  }
+
+  if (req.method === "GET" && pathname === "/discord-health") {
+    res.writeHead(discordReady ? 200 : 503, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+
+    return res.end(JSON.stringify({
+      status: discordReady ? "ok" : "degraded",
+      discord: discordReady ? "ready" : "disconnected_or_starting",
+      uptimeSeconds: Math.floor(process.uptime()),
+    }));
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/plain; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+
+  return res.end("LAMPOON Reminder Bot process is running.");
+});
+
+// Start listening BEFORE attempting Discord login.
+// This allows Render to detect the HTTP port even if Discord is slow.
+healthServer.on("error", (error) => {
+  console.error("❌ Render health server error:", error);
+});
+
+healthServer.listen(PORT, "0.0.0.0", () => {
+  console.log(`🌐 Render health server running on port ${PORT}`);
 });
 
 console.log("🔎 Checking Discord token configuration:", {
@@ -1774,14 +1851,37 @@ console.log("🔎 Checking Discord token configuration:", {
   tokenType: typeof TOKEN,
 });
 
-// Call client.login() exactly once in the entire file.
-client.login(TOKEN).catch((error) => {
-  console.error("❌ Discord login failed:", error);
-});
+if (!TOKEN) {
+  console.error(
+    "❌ DISCORD_TOKEN is missing. Set it in Render Environment settings."
+  );
+} else {
+  // There must be exactly ONE client.login() call in index.js.
+  client.login(TOKEN).then(() => {
+    console.log(
+      "🔐 Discord login handshake accepted; waiting for Gateway READY event."
+    );
+  }).catch((error) => {
+    console.error("❌ Discord login failed:", error);
+  });
+}
+
 
 // ============================================================
-// SECTION 24 — MAINTENANCE NOTES
+// SECTION 24 — MAINTENANCE NOTES AND SAFETY GUARANTEES
 // ============================================================
-// Keep scanner failures inconclusive (never delete media on provider outages).
-// Keep public reminder logs concise and private moderator logs audit-complete.
-// Keep sticky refreshes serialized per channel to avoid duplicate reminders.
+
+// 1. Do not run historical message cleanup on startup.
+// 2. Do not mass-delete existing channel history.
+// 3. Keep scanner failures inconclusive; never delete media solely
+//    because a moderation provider is unavailable.
+// 4. Keep public reminder logs concise and moderator audit logs complete.
+// 5. Keep sticky refreshes serialized per channel to prevent duplicates.
+// 6. Keep the /health endpoint independent of Discord Gateway readiness.
+// 7. Keep exactly one HTTP health server and one client.login(TOKEN) call.
+// 8. Keep the moderation embed headers, colors, and wording unchanged.
+
+
+// ============================================================
+// END OF SECTIONS 21–24
+// ============================================================
