@@ -297,6 +297,8 @@ const pinnedMessages = new Map();
 const stickyMessages = new Map();
 const violationCounts = new Map();
 const stickyLocks = new Map();
+// Coalesce concurrent message events into one follow-up refresh per active batch.
+const stickyRefreshRequested = new Set();
 const stickyDisabledChannels = new Set();
 const stickyLastRefreshAt = new Map();
 const recentUserMessages = new Map();
@@ -356,7 +358,9 @@ const ALLOWED_CODE_REPLIES = ["done", "used", "invalid", "expired", "not work", 
 const APPRECIATION_REPLIES = [
   "thank you", "thanks", "appreciate it", "i appreciate it", "i appreciate your help",
   "thank you so much", "thanks a lot", "thank you for appreciation", "thank you for the appreciation",
-  "thank you for your help", "thanks for your help", "much appreciated"
+  "thank you for your help", "thanks for your help", "much appreciated",
+  "salamat", "salamat po", "maraming salamat", "maraming salamat po",
+  "salamat sa tulong", "thank you po", "thanks po"
 ];
 
 function normalizeShortReply(text) {
@@ -377,6 +381,7 @@ function isAppreciationReply(text) {
   // Keep this limited to thank-you/appreciation wording to avoid permitting general chat.
   if (value.length <= 80 && /^(thank you|thanks)(\s+(so much|very much|for (the )?(help|appreciation|sharing|the code|this)))?$/.test(value)) return true;
   if (value.length <= 80 && /^(i )?appreciate( it| this| your (help|sharing|effort))$/.test(value)) return true;
+  if (value.length <= 80 && /^(salamat( po)?|maraming salamat( po)?|salamat sa tulong|thank you po|thanks po)$/.test(value)) return true;
   return false;
 }
 
@@ -510,7 +515,7 @@ function createStickyEmbed(rule) {
   const embed = new EmbedBuilder()
     .setColor(GOLD)
     .setTitle("📢 READ REMINDER!")
-    .setDescription(`**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}\n\n${STICKY_MARKER}`);
+    .setDescription(`**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
   if (LAMPOON_ICON_URL) embed.setThumbnail(LAMPOON_ICON_URL);
   return applyLampoonFooter(embed);
 }
@@ -688,57 +693,91 @@ async function ensureSticky(channel, rule, refresh = true) {
   if (channel?.isThread?.()) return null;
   if (!channel?.isTextBased() || channel.type === ChannelType.GuildForum || rule.type === "build") return null;
   if (stickyDisabledChannels.has(channel.id)) return null;
+
   const activeLock = stickyLocks.get(channel.id);
   if (activeLock) {
+    // Do not recursively refresh once per waiting message. Mark the channel dirty;
+    // the lock owner will perform one coalesced follow-up pass after this pass.
+    if (refresh) stickyRefreshRequested.add(channel.id);
     await activeLock;
-    // A newer message may have arrived while the previous refresh was running.
-    return refresh ? ensureSticky(channel, rule, true) : (stickyMessages.get(channel.id) || null);
+    return stickyMessages.get(channel.id) || null;
   }
+
   let releaseLock;
   const lockPromise = new Promise(resolve => { releaseLock = resolve; });
   stickyLocks.set(channel.id, lockPromise);
 
   try {
-    const oldStickies = await findExistingStickies(channel, 2000);
-    if (!Array.isArray(oldStickies)) {
-      console.warn(`⚠️ Sticky refresh aborted in #${channel.name}: could not verify existing reminders.`);
-      return null;
-    }
-    // Startup/reconnect scans preserve a single existing sticky; normal refreshes move it down.
-    if (!refresh && oldStickies.length === 1) {
-      stickyMessages.set(channel.id, oldStickies[0]);
-      return oldStickies[0];
-    }
-    let deleteFailed = false;
-    for (const oldSticky of oldStickies) {
-      try {
-        if (oldSticky.pinned) {
-          await oldSticky.unpin("Remove duplicate LAMPOON sticky reminder");
-        }
-        await oldSticky.delete();
-        console.log(`🗑️ Removed old sticky in #${channel.name}`);
-      } catch (error) {
-        deleteFailed = true;
-        console.error(`❌ Could not remove old sticky in #${channel.name}:`, error.message);
+    let shouldRefresh = refresh;
+    do {
+      stickyRefreshRequested.delete(channel.id);
+      if (stickyDisabledChannels.has(channel.id)) return null;
+
+      const oldStickies = await findExistingStickies(channel, 2000);
+      if (!Array.isArray(oldStickies)) {
+        console.warn(`⚠️ Sticky refresh aborted in #${channel.name}: could not verify existing reminders.`);
+        return null;
       }
-    }
 
-    // Never send a replacement if a previous sticky could not be deleted.
-    if (deleteFailed) {
-      console.warn(`⚠️ Sticky creation skipped in #${channel.name} to prevent duplicates.`);
-      return null;
-    }
+      // Cleanup may have been requested while Discord history was being fetched.
+      // Stop before touching messages or creating a new sticky in that case.
+      if (stickyDisabledChannels.has(channel.id)) return null;
+      // If a burst arrived while history was being fetched, rescan before deleting
+      // or sending anything. This avoids transient duplicate/stale sticky messages.
+      if (stickyRefreshRequested.has(channel.id)) {
+        shouldRefresh = true;
+        continue;
+      }
 
-    const stickyEmbed = createStickyEmbed(rule);
-    const newSticky = await channel.send({ embeds: [stickyEmbed] });
-    stickyMessages.set(channel.id, newSticky);
-    stickyLastRefreshAt.set(channel.id, Date.now());
-    console.log(`💡 Single sticky refreshed in #${channel.name}`);
-    return newSticky;
+      // Startup/reconnect recovery preserves a single existing sticky. If concurrent
+      // messages arrived during recovery, the queued follow-up pass moves it down.
+      if (!shouldRefresh && oldStickies.length === 1) {
+        stickyMessages.set(channel.id, oldStickies[0]);
+        shouldRefresh = stickyRefreshRequested.has(channel.id);
+        if (!shouldRefresh) return oldStickies[0];
+        shouldRefresh = true;
+        continue;
+      }
+
+      let deleteFailed = false;
+      for (const oldSticky of oldStickies) {
+        if (stickyDisabledChannels.has(channel.id)) return null;
+        try {
+          if (oldSticky.pinned) await oldSticky.unpin("Remove duplicate LAMPOON sticky reminder");
+          await oldSticky.delete();
+          console.log(`🗑️ Removed old sticky in #${channel.name}`);
+        } catch (error) {
+          deleteFailed = true;
+          console.error(`❌ Could not remove old sticky in #${channel.name}:`, error.message);
+        }
+      }
+
+      // Never send a replacement if scanning failed or any old sticky could not be deleted.
+      if (deleteFailed) {
+        console.warn(`⚠️ Sticky creation skipped in #${channel.name} to prevent duplicates.`);
+        return null;
+      }
+      // /sticky-cleanup disables the channel while waiting for this lock. Check again
+      // after awaited deletions so a late continuation cannot recreate the sticky.
+      if (stickyDisabledChannels.has(channel.id)) return null;
+
+      const stickyEmbed = createStickyEmbed(rule);
+      const newSticky = await channel.send({ embeds: [stickyEmbed] });
+      stickyMessages.set(channel.id, newSticky);
+      stickyLastRefreshAt.set(channel.id, Date.now());
+      console.log(`💡 Single sticky refreshed in #${channel.name}`);
+
+      // Every message that arrived during this pass sets the same flag. Clearing it
+      // at the start of a pass means a burst is collapsed instead of causing N sends.
+      shouldRefresh = stickyRefreshRequested.has(channel.id) && !stickyDisabledChannels.has(channel.id);
+    } while (shouldRefresh);
+
+    return stickyMessages.get(channel.id) || null;
   } catch (error) {
     console.error(`❌ Sticky failed in #${channel.name}:`, error.message);
     return null;
   } finally {
+    stickyRefreshRequested.delete(channel.id);
     if (stickyLocks.get(channel.id) === lockPromise) stickyLocks.delete(channel.id);
     releaseLock();
   }
@@ -1135,32 +1174,31 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
   const details = getRemovalLogDetails(message, reason, serious, actionTaken);
   const commonDescription = `**Member:** <@${message.author?.id}>\n**Channel:** <#${message.channel?.id}>`;
 
-  // PRIVATE MOD LOG EMBED: preserve the full audit trail for admins/staff.
+  // PRIVATE MOD LOG: full audit trail for moderators/admins.
   const modEmbed = new EmbedBuilder()
     .setColor(details.color)
     .setTitle(details.title)
     .setDescription(commonDescription)
     .addFields(
       { name: "📋 Reason", value: details.reasonText.slice(0, 1024), inline: false },
-      { name: "❓ Why was it removed?", value: details.why.slice(0, 1024), inline: false },
-      { name: "🛠️ Required action", value: details.requiredAction.slice(0, 1024), inline: false },
-      { name: "⚖️ Moderation action", value: String(details.actionTaken).slice(0, 1024), inline: false },
+      { name: "🔎 Context", value: details.why.slice(0, 1024), inline: false },
+      { name: "🛠️ Suggested action", value: details.requiredAction.slice(0, 1024), inline: false },
+      { name: "⚖️ Audit action", value: String(details.actionTaken).slice(0, 1024), inline: false },
       { name: "💬 Submitted content", value: content || "[Empty message]", inline: false },
-      { name: "🔗 Message ID", value: `\`${message.id || "Unknown ID"}\``, inline: false }
+      { name: "🔗 Message ID", value: "`" + (message.id || "Unknown ID") + "`", inline: false }
     )
     .setTimestamp();
 
-  // PUBLIC REMINDER LOG EMBED: member-facing explanation; omit raw submitted content and message ID.
+  // PUBLIC REMINDER LOG: concise member-facing notice, deliberately not an audit copy.
+  const publicNextStep = serious
+    ? "Please stop this behavior and contact a moderator if you believe this was a mistake."
+    : (details.color === "#FF8C00"
+        ? "Please check the channel topic and submit media that matches its requirements."
+        : "Please keep messages relevant to the channel and follow its posting rules.");
   const reminderEmbed = new EmbedBuilder()
     .setColor(details.color)
     .setTitle(details.title)
-    .setDescription(commonDescription)
-    .addFields(
-      { name: "📋 Reason", value: details.reasonText.slice(0, 1024), inline: false },
-      { name: "❓ Why was it removed?", value: details.why.slice(0, 1024), inline: false },
-      { name: "🛠️ Required action", value: details.requiredAction.slice(0, 1024), inline: false },
-      { name: "⚖️ Moderation action", value: String(details.actionTaken).slice(0, 1024), inline: false }
-    )
+    .setDescription(`${commonDescription}\\n\\n**Reason:** ${details.reasonText.slice(0, 700)}\\n\\n**Next step:** ${publicNextStep}`)
     .setTimestamp();
 
   await Promise.all([
@@ -1552,3 +1590,11 @@ healthServer.listen(PORT, "0.0.0.0", () => {
 client.login(TOKEN)
   .then(() => console.log("🔐 Discord login successful."))
   .catch((error) => console.error("❌ Login failed:", error));
+
+
+// ============================================================
+// SECTION 24 — MAINTENANCE NOTES
+// ============================================================
+// Keep scanner failures inconclusive (never delete media on provider outages).
+// Keep public reminder logs concise and private moderator logs audit-complete.
+// Keep sticky refreshes serialized per channel to avoid duplicate reminders.
