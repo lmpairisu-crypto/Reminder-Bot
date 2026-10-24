@@ -1730,10 +1730,9 @@ client.once("ready", async () => {
   }
 });
 
-
-// ============================================================
-// SECTION 22 — ERROR HANDLING AND SHUTDOWN
-// ============================================================
+ // ============================================================
+ // SECTION 22 — ERROR HANDLING AND SHUTDOWN
+ // ============================================================
 
 client.on("error", (error) => {
   console.error("❌ Discord client error:", error);
@@ -1745,6 +1744,10 @@ client.on("warn", (warning) => {
 
 client.on("shardError", (error, shardId) => {
   console.error(`❌ Discord shard ${shardId} error:`, error);
+});
+
+client.on("shardReady", (shardId) => {
+  console.log(`✅ Discord shard ${shardId} is ready.`);
 });
 
 client.on("shardDisconnect", (closeEvent, shardId) => {
@@ -1778,10 +1781,20 @@ process.on("unhandledRejection", (error) => {
 
 process.on("uncaughtException", (error) => {
   console.error("❌ Uncaught Exception:", error);
-  // A process in an unknown state should be restarted by the host.
-  // Do not assume it is safe to continue after this error.
+  // Allow the hosting platform to restart the process if necessary.
 });
 
+process.on("SIGTERM", async () => {
+  console.log("📤 Shutting down gracefully...");
+
+  try {
+    await client.destroy();
+  } catch (error) {
+    console.error("❌ Error while destroying Discord client:", error);
+  }
+
+  process.exit(0);
+});
 
 // ============================================================
 // SECTION 23 — RENDER HEALTH SERVER AND DISCORD LOGIN
@@ -1880,8 +1893,3 @@ if (!TOKEN) {
 // 6. Keep the /health endpoint independent of Discord Gateway readiness.
 // 7. Keep exactly one HTTP health server and one client.login(TOKEN) call.
 // 8. Keep the moderation embed headers, colors, and wording unchanged.
-
-
-// ============================================================
-// END OF SECTIONS 21–24
-// ============================================================
