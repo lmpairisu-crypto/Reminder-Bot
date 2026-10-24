@@ -1553,8 +1553,17 @@ client.once("clientReady", async () => {
   await initializeChannels();
 });
 
-client.on("shardResume", async () => {
+client.on("shardResume", async (shardId, replayedEvents) => {
+  console.log(`🔄 Discord Gateway shard ${shardId} resumed (${replayedEvents} events replayed).`);
   await recoverStickyReminders();
+});
+
+client.on("shardDisconnect", (closeEvent, shardId) => {
+  console.warn(`⚠️ Discord Gateway shard ${shardId} disconnected (code ${closeEvent?.code ?? "unknown"}${closeEvent?.reason ? `, reason: ${closeEvent.reason}` : ""}).`);
+});
+
+client.on("shardReconnecting", (shardId) => {
+  console.log(`🔁 Discord Gateway shard ${shardId} is reconnecting...`);
 });
 
 // ============================================================
@@ -1578,19 +1587,34 @@ process.on("SIGTERM", () => {
 // SECTION 23 — RENDER HEALTH CHECK AND DISCORD LOGIN
 // ============================================================
 // Render supplies PORT automatically. UptimeRobot can monitor /health.
-// This endpoint reports that the Node.js HTTP process is responding;
-// it does not guarantee that Render Free will remain awake 24/7.
+// /health only succeeds when the Discord Gateway is actually ready, not merely
+// when this HTTP process is alive. A 503 lets monitoring detect an offline bot.
+// Render Free may still sleep; an HTTP health check cannot guarantee 24/7 uptime.
 const PORT = Number(process.env.PORT) || 10000;
 const healthServer = http.createServer((req, res) => {
-  const pathname = new URL(req.url, `http://${req.headers.host || "localhost"}`).pathname;
+  let pathname;
+  try {
+    pathname = new URL(req.url, `http://${req.headers.host || "localhost"}`).pathname;
+  } catch {
+    res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+    return res.end("Bad Request");
+  }
 
   if (req.method === "GET" && pathname === "/health") {
-    res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-    return res.end("OK");
+    const discordReady = client.isReady();
+    res.writeHead(discordReady ? 200 : 503, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    return res.end(JSON.stringify({
+      status: discordReady ? "ok" : "degraded",
+      discord: discordReady ? "ready" : "disconnected_or_starting",
+      uptimeSeconds: Math.floor(process.uptime()),
+    }));
   }
 
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-  res.end("Reminder Bot is online.");
+  res.end("Reminder Bot process is running.");
 });
 
 healthServer.listen(PORT, "0.0.0.0", () => {
