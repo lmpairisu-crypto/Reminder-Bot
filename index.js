@@ -1137,7 +1137,14 @@ async function registerViolation(message, reason, serious = false, isSpam = fals
 
 function getRemovalLogDetails(message, reason, serious, actionTaken) {
   const reasonText = String(reason || "No reason provided").trim();
-  const hasMedia = Boolean(message.attachments?.size) || /\b(image|screenshot|video|gif|media|skin showcase|profile showcase|fan.?art|meme image)\b/i.test(reasonText);
+  // A message is a media-submission violation only when it actually contains
+  // media OR the reason explicitly says that required media/format was missing
+  // or invalid. Historical text-only cleanup reasons often mention that media
+  // was preserved; that wording must never turn a plain "Hello" orange.
+  const hasAttachments = Boolean(message.attachments?.size);
+  const isHistoricalTextChat = /historical cleanup|text-only chat|text\/sticker|plain text|casual chat/i.test(reasonText);
+  const explicitlyMediaFailure = !isHistoricalTextChat && /(?:image|screenshot|video|gif|media|skin showcase|profile showcase|fan.?art|meme image)\s+(?:required|missing|not allowed|does not match|did not pass)|(?:required|missing)\s+(?:image|screenshot|video|media|fan.?art)/i.test(reasonText);
+  const hasMedia = hasAttachments || explicitlyMediaFailure;
   const color = serious ? "#FF3030" : (hasMedia ? "#FF8C00" : "#FFD700");
   const title = serious ? "🔴 SERIOUS VIOLATION" : (hasMedia ? "🟠 MEDIA SUBMISSION REMOVED" : "🟡 CONTENT CORRECTION REQUIRED");
   let why;
@@ -1174,10 +1181,14 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
 
   // PRIVATE MOD LOG: full audit trail for moderators/admins.
   const modEmbed = new EmbedBuilder()
-    .setColor(details.color)
-    .setTitle(details.title)
-    .setDescription(commonDescription)
+    // Private audit keeps the classic gold MESSAGE REMOVED format regardless
+    // of the public reminder category. Public colors must not leak into audit.
+    .setColor(GOLD)
+    .setTitle("🗑️ MESSAGE REMOVED")
+    .setDescription("A message was removed by the Lampoon moderation system.\n\n" + commonDescription)
     .addFields(
+      { name: "👤 User", value: `${message.author?.tag || message.author?.username || "Unknown user"}\n\`${message.author?.id || "Unknown ID"}\``, inline: false },
+      { name: "📍 Channel", value: `${message.channel?.name ? `#${message.channel.name}` : "Unknown channel"}\n\`${message.channel?.id || "Unknown ID"}\``, inline: false },
       { name: "📋 Reason", value: details.reasonText.slice(0, 1024), inline: false },
       { name: "🔎 Context", value: details.why.slice(0, 1024), inline: false },
       { name: "🛠️ Suggested action", value: details.requiredAction.slice(0, 1024), inline: false },
@@ -1618,6 +1629,7 @@ client.on("interactionCreate", async (interaction) => {
 // ============================================================
 
 client.once("clientReady", async () => {
+  console.log("🔐 Discord Gateway READY event received.");
   console.log("========================================");
   console.log(`🤖 Logged in as ${client.user.tag}`);
   console.log(`🏠 Connected to ${client.guilds.cache.size} guild(s)`);
@@ -1725,8 +1737,11 @@ healthServer.listen(PORT, "0.0.0.0", () => {
 
 
 client.login(TOKEN)
-  .then(() => console.log("🔐 Discord login successful."))
-  .catch((error) => console.error("❌ Login failed:", error));
+  .then(() => console.log("🔐 Discord login handshake accepted; waiting for Gateway READY event."))
+  .catch((error) => {
+    console.error("❌ Discord login failed:", error);
+    process.exitCode = 1;
+  });
 
 
 // ============================================================
