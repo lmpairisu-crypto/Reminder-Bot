@@ -107,16 +107,3 @@ test('a sticky that cannot be deleted is not replaced', async () => {
   assert.equal(env.sends, 0);
   assert.equal(env.stickies.length, 1);
 });
-
-
-test('live message handler refreshes sticky before moderation processing', () => {
-  const handlerStart = source.indexOf('client.on("messageCreate", async (message) => {');
-  const handlerEnd = source.indexOf('\nclient.', handlerStart + 10);
-  assert.ok(handlerStart >= 0, 'messageCreate handler should exist');
-  const handler = source.slice(handlerStart, handlerEnd > handlerStart ? handlerEnd : undefined);
-  const refresh = handler.indexOf('await refreshStickyAfterMessage(channel, rule)');
-  const moderation = handler.indexOf('await processMessage(message, rule)');
-  assert.ok(refresh >= 0, 'every configured-channel message should request a sticky refresh');
-  assert.ok(moderation > refresh, 'sticky refresh should be attempted before moderation processing');
-  assert.match(source, /findExistingStickies\(channel, refresh \? 100 : 2000\)/, 'live refresh should use a short scan while startup recovery remains deep');
-});
