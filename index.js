@@ -106,21 +106,12 @@ function isGeminiCoolingDown() { return Date.now() < geminiCooldownUntil; }
 
 function noteGeminiError(error) {
   const message = String(error?.message || error || "");
-  // Quota/rate-limit responses get a longer cooldown; transient provider/network
-  // failures get a short circuit-breaker cooldown. In either case, scanner
-  // failure is UNKNOWN, never a content violation and never a reason to delete media.
-  const quotaFailure = /429|quota|rate.?limit|resource.?exhausted/i.test(message);
-  const transientFailure = /503|502|504|500|overload|temporarily unavailable|service unavailable|fetch failed|network error|ECONNRESET|ETIMEDOUT|socket hang up/i.test(message);
-  if (!quotaFailure && !transientFailure) return;
-
-  const retryMatch = message.match(/retry in\s+([0-9.]+)\s*s/i);
-  const defaultDelaySeconds = quotaFailure ? 3600 : 60;
-  const delaySeconds = retryMatch ? Number(retryMatch[1]) : defaultDelaySeconds;
-  const boundedDelay = Math.min(Math.max(Number.isFinite(delaySeconds) ? delaySeconds : defaultDelaySeconds, 60), 24 * 60 * 60);
-  geminiCooldownUntil = Math.max(geminiCooldownUntil, Date.now() + boundedDelay * 1000);
-  console.warn(quotaFailure
-    ? `⏸️ Gemini quota/rate limit detected; AI calls paused for about ${Math.ceil(boundedDelay / 60)} minute(s).`
-    : `⏸️ Gemini/provider network failure detected; AI calls paused for ${Math.ceil(boundedDelay)} second(s).`);
+  if (/429|quota|rate.?limit|resource.?exhausted/i.test(message)) {
+    const retryMatch = message.match(/retry in\s+([0-9.]+)\s*s/i);
+    const delaySeconds = retryMatch ? Number(retryMatch[1]) : 3600;
+    geminiCooldownUntil = Date.now() + Math.min(Math.max(delaySeconds, 60), 24 * 60 * 60) * 1000;
+    console.warn("⏸️ Gemini quota/rate limit detected; AI calls paused temporarily.");
+  }
 }
 
 function getCachedAIResult(key) {
@@ -711,10 +702,7 @@ async function ensureSticky(channel, rule, refresh = true) {
       stickyRefreshRequested.delete(channel.id);
       if (stickyDisabledChannels.has(channel.id)) return null;
 
-      // Live refreshes only need a short recent-history scan. The cached sticky and
-      // pinned-message lookup below still catch the active reminder, while startup
-      // recovery (refresh=false) retains the deep scan to find older legacy stickies.
-      const oldStickies = await findExistingStickies(channel, refresh ? 100 : 2000);
+      const oldStickies = await findExistingStickies(channel, 2000);
       if (!Array.isArray(oldStickies)) {
         console.warn(`⚠️ Sticky refresh aborted in #${channel.name}: could not verify existing reminders.`);
         return null;
@@ -812,7 +800,7 @@ async function askGeminiImage(imageUrl, channelType) {
       { inlineData: { data: base64Image, mimeType } },
     ]);
     const match = result.response.text().match(/\{[\s\S]*\}/);
-    if (!match) return { ...unavailable, reason: "Gemini returned an unreadable result; media retained." };
+    if (!match) return unavailable;
     const parsed = JSON.parse(match[0]);
     const status = ["allowed", "rejected", "unknown"].includes(parsed.status) ? parsed.status : "unknown";
     const value = { status, serious: parsed.serious === true, reason: String(parsed.reason || "").slice(0, 500) };
@@ -892,20 +880,11 @@ async function scanMessageImages(images, channelType) {
   for (const attachment of images.slice(0, MAX_IMAGES_TO_SCAN_PER_MESSAGE)) {
     const result = await askGeminiImage(attachment.url, channelType);
     results.push(result);
-    // A clear serious finding remains actionable even if a later scan is unavailable.
-    if (result.serious === true) return { serious: true, rejected: false, reason: result.reason || "Serious prohibited content detected." };
+    if (result.serious) return { serious: true, rejected: false, reason: result.reason };
   }
-
-  // Fail open for media when ANY image scan is inconclusive. This prevents a
-  // quota outage/network error on one attachment from allowing another result
-  // to cause the entire multi-image message to be deleted.
-  if (results.some(result => result.status === "unknown" || result.unavailable === true)) {
-    return { serious: false, rejected: false, reason: "Scanner inconclusive (quota, outage, or unreadable attachment); media retained." };
-  }
-
   const rejected = results.find(result => result.status === "rejected");
   if (rejected) return { serious: false, rejected: true, reason: rejected.reason || "Image does not match this channel." };
-  return { serious: false, rejected: false, reason: "Image check completed." };
+  return { serious: false, rejected: false, reason: results.some(r => r.status === "unknown") ? "Scanner inconclusive; media retained." : "Image check completed." };
 }
 
 
@@ -1067,8 +1046,9 @@ async function sendModerationLog(embed, memberId = null) {
   try {
     const channel = await client.channels.fetch(MOD_LOG_CHANNEL_ID);
     if (channel?.isTextBased()) {
-      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: memberId ? [memberId] : [] } };
-      if (memberId) payload.content = `<@${memberId}>`;
+      // Private audit logs are staff records, not member notifications: never
+      // add a raw mention outside the embed or ping a member from this channel.
+      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [] } };
       await channel.send(payload);
     } else {
       console.error("❌ MOD LOG channel is missing or is not text-based.");
@@ -1158,7 +1138,15 @@ async function registerViolation(message, reason, serious = false, isSpam = fals
 
 function getRemovalLogDetails(message, reason, serious, actionTaken) {
   const reasonText = String(reason || "No reason provided").trim();
-  const hasMedia = Boolean(message.attachments?.size) || /\b(image|screenshot|video|gif|media|skin showcase|profile showcase|fan.?art|meme image)\b/i.test(reasonText);
+  // A message is a media-submission violation only when it actually contains
+  // media OR the reason explicitly says that required media/format was missing
+  // or invalid. Historical text-only cleanup reasons often mention that media
+  // was preserved; that wording must never turn a plain "Hello" orange.
+  // Orange is reserved for an actual media submission that was rejected.
+  // A text-only "Hello" missing a required image is a yellow correction, even
+  // when its reason says "Fan art image required" or "Skin image/video required".
+  const hasAttachments = Boolean(message.attachments?.size);
+  const hasMedia = hasAttachments;
   const color = serious ? "#FF3030" : (hasMedia ? "#FF8C00" : "#FFD700");
   const title = serious ? "🔴 SERIOUS VIOLATION" : (hasMedia ? "🟠 MEDIA SUBMISSION REMOVED" : "🟡 CONTENT CORRECTION REQUIRED");
   let why;
@@ -1193,18 +1181,19 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
   const details = getRemovalLogDetails(message, reason, serious, actionTaken);
   const commonDescription = `**Member:** <@${message.author?.id}>\n**Channel:** <#${message.channel?.id}>`;
 
-  // PRIVATE MOD LOG: full audit trail for moderators/admins.
+  // PRIVATE MOD LOG: restore the classic compact gold audit. No member mention,
+  // no duplicated context/action paragraphs, and no public-log formatting here.
   const modEmbed = new EmbedBuilder()
-    .setColor(details.color)
-    .setTitle(details.title)
-    .setDescription(commonDescription)
+    .setColor(GOLD)
+    .setTitle("🗑️ MESSAGE REMOVED")
+    .setDescription("A message was removed by the Lampoon moderation system.")
     .addFields(
+      { name: "👤 User", value: `${message.author?.tag || message.author?.username || "Unknown user"}\n\`${message.author?.id || "Unknown ID"}\``, inline: false },
+      { name: "📍 Channel", value: `${message.channel?.name ? `#${message.channel.name}` : "Unknown channel"}\n\`${message.channel?.id || "Unknown ID"}\``, inline: false },
       { name: "📋 Reason", value: details.reasonText.slice(0, 1024), inline: false },
-      { name: "🔎 Context", value: details.why.slice(0, 1024), inline: false },
-      { name: "🛠️ Suggested action", value: details.requiredAction.slice(0, 1024), inline: false },
-      { name: "⚖️ Audit action", value: String(details.actionTaken).slice(0, 1024), inline: false },
-      { name: "💬 Submitted content", value: content || "[Empty message]", inline: false },
-      { name: "🔗 Message ID", value: "`" + (message.id || "Unknown ID") + "`", inline: false }
+      { name: "💬 Message", value: content || "[Empty message]", inline: false },
+      { name: "🔗 Message ID", value: "`" + (message.id || "Unknown ID") + "`", inline: false },
+      { name: "🚨 Serious", value: serious ? "Yes" : "No", inline: false }
     )
     .setTimestamp();
 
@@ -1329,15 +1318,20 @@ function getHistoricalChatViolation(message, rule) {
     // Preserve plain-text codes and allowed short status/appreciation replies.
     if (containsPossibleCode(content)) return null;
     if (message.reference && (isAllowedCodeReply(content) || isAppreciationReply(content))) return null;
-    return 'Historical cleanup: text-only chat in Event Code Share; code submissions and allowed replies are preserved.';
+    return 'Event code or redemption screenshot required.';
   }
 
-  // Only clean text/sticker-only messages in channels whose purpose is a
-  // media submission. Existing image/video submissions are never touched.
-  const mediaSubmissionTypes = new Set(['profile', 'skin', 'hero', 'hok-meme', 'general-meme', 'fanart']);
-  if (mediaSubmissionTypes.has(rule.type)) {
-    return `Historical cleanup: text${hasSticker && !content ? '/sticker' : '-only'} chat in ${rule.name || rule.type}; media submissions are preserved.`;
-  }
+  // Historical cleanup reports the channel's configured requirement, not an
+  // implementation detail about the cleanup process. Missing media stays yellow.
+  const historicalReasons = {
+    profile: 'Profile image/video required.',
+    skin: 'Skin image/video required.',
+    hero: 'Gameplay highlight video required.',
+    'hok-meme': 'Honor of Kings meme image required.',
+    'general-meme': 'Meme image required.',
+    fanart: 'Fan art image required.',
+  };
+  if (Object.hasOwn(historicalReasons, rule.type)) return historicalReasons[rule.type];
   return null;
 }
 
@@ -1384,15 +1378,8 @@ async function cleanupHistoricalChat() {
 // SUBSECTION 18.5 — LIVE MESSAGE EVENT HANDLERS AND STICKY REFRESH
 // ============================================================
 async function refreshStickyAfterMessage(channel, rule) {
-  // Do not wait for Gemini/moderation: finish sticky refresh first. ensureSticky
-  // serializes concurrent events for this channel and coalesces message bursts.
-  const sticky = await ensureSticky(channel, rule, true);
-  if (sticky) {
-    console.log(`📌 Sticky is at the bottom in #${channel.name} (${channel.id}); sticky=${sticky.id}`);
-  } else {
-    console.warn(`⚠️ Sticky was not confirmed at the bottom in #${channel.name} (${channel.id}); see preceding sticky-refresh errors.`);
-  }
-  return sticky;
+  // No delay: await completion before the message enters spam/AI moderation.
+  await ensureSticky(channel, rule, true);
 }
 
 
@@ -1410,8 +1397,6 @@ client.on("messageCreate", async (message) => {
     // This keeps it at the bottom while a post is being scanned, even if the
     // post is later removed. ensureSticky serializes work per channel.
     if (!(channel.isThread?.() && parentRule?.type === "build")) {
-      // Await this before scanning. If Discord history/delete/send fails, the
-      // refresh function logs the failure and moderation can still proceed.
       await refreshStickyAfterMessage(channel, rule);
     }
 
@@ -1648,6 +1633,7 @@ client.on("interactionCreate", async (interaction) => {
 // ============================================================
 
 client.once("clientReady", async () => {
+  console.log("🔐 Discord Gateway READY event received.");
   console.log("========================================");
   console.log(`🤖 Logged in as ${client.user.tag}`);
   console.log(`🏠 Connected to ${client.guilds.cache.size} guild(s)`);
@@ -1755,8 +1741,11 @@ healthServer.listen(PORT, "0.0.0.0", () => {
 
 
 client.login(TOKEN)
-  .then(() => console.log("🔐 Discord login successful."))
-  .catch((error) => console.error("❌ Login failed:", error));
+  .then(() => console.log("🔐 Discord login handshake accepted; waiting for Gateway READY event."))
+  .catch((error) => {
+    console.error("❌ Discord login failed:", error);
+    process.exitCode = 1;
+  });
 
 
 // ============================================================
