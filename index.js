@@ -1694,7 +1694,11 @@ client.on("interactionCreate", async (interaction) => {
  // SECTION 21 — BOT STARTUP AND READY EVENT
  // ============================================================
 
+let readyWarning = null;
+
 client.once("ready", async () => {
+  if (readyWarning) clearTimeout(readyWarning);
+  console.log("✅ Discord Gateway READY event received.");
   console.log("🔐 Discord Gateway READY event received.");
   console.log("========================================");
   console.log(`🤖 Logged in as ${client.user.tag}`);
@@ -1737,6 +1741,17 @@ client.on("error", (error) => {
 
 client.on("warn", (warning) => {
   console.warn("⚠️ Discord warning:", warning);
+});
+
+client.on("debug", (info) => {
+  // Keep useful Gateway lifecycle diagnostics without flooding Render logs.
+  if (/gateway|websocket|identify|heartbeat|session|ready|close|reconnect/i.test(info)) {
+    console.log(`🔎 Discord debug: ${info}`);
+  }
+});
+
+client.on("invalidated", () => {
+  console.error("❌ Discord session invalidated. Check the bot token and Discord Gateway session.");
 });
 
 client.on("shardError", (error, shardId) => {
@@ -1833,22 +1848,20 @@ healthServer.listen(PORT, "0.0.0.0", () => {
 });
 
 console.log("🔎 Discord token configured:", Boolean(TOKEN));
+console.log("🔎 Gateway intents requested: Guilds, GuildMembers, GuildMessages, MessageContent, GuildMessageReactions.");
+console.log("🔎 If Gateway closes with code 4014, enable the required privileged intents in the Discord Developer Portal.");
 
 if (!TOKEN) {
   console.error("❌ Missing TOKEN. Check Render's DISCORD_TOKEN environment variable.");
 } else {
-  const readyWarning = setTimeout(() => {
+  readyWarning = setTimeout(() => {
     if (!client.isReady()) {
       console.error(
         "⏰ Discord has not reached READY after 30 seconds. " +
-        "Check login, intents, and shard/Gateway logs."
+        "Review the Gateway debug, shardDisconnect, shardError, and login-failure messages immediately above."
       );
     }
   }, 30_000);
-
-  client.once("clientReady", () => {
-    clearTimeout(readyWarning);
-  });
 
   client.login(TOKEN).then(() => {
     console.log("🔐 Discord login accepted; waiting for Gateway READY.");
