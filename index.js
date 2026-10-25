@@ -21,13 +21,10 @@ const {
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
-// Category IDs are documented for organization only; moderation remains channel-specific.
-const COMMUNITY_PUBLIC_CATEGORY_ID = process.env.COMMUNITY_PUBLIC_CATEGORY_ID || "1533150080717160611";
-const LAMPOON_PRIVATE_CATEGORY_ID = process.env.LAMPOON_PRIVATE_CATEGORY_ID || "1533155325757362357";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || null;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || null; // Private admin/staff moderation log
-const REMINDER_LOG_CHANNEL_ID = process.env.REMINDER_LOG_CHANNEL_ID || "1562888790857490462"; // Central member-facing moderation explanations
+const REMINDER_LOG_CHANNEL_ID = process.env.REMINDER_LOG_CHANNEL_ID || null; // Member-facing moderation explanations
 const LAMPOON_ICON_URL = process.env.LAMPOON_ICON_URL || null; // Embed thumbnail only; intentionally separate from footer icon.
 const LAMPOON_FOOTER_ICON_URL = process.env.LAMPOON_FOOTER_ICON_URL || "https://cdn.discordapp.com/attachments/1532817641490874491/1562134042248478750/Dofoto_20261021_000232084.png?ex=6ad98af2&is=6ad83972&hm=795eb8acb674ed9005ce69ff28781ebeb87aeaab98be3ab60217d4ae035cdcf8&";
 
@@ -104,25 +101,6 @@ const AI_CACHE_TTL_MS = 10 * 60 * 1000;
 const AI_CACHE_MAX_ENTRIES = 500;
 const MAX_IMAGES_TO_SCAN_PER_MESSAGE = 3;
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
-// Keep a burst of submissions from creating dozens of simultaneous Gemini requests.
-// Two concurrent calls balances throughput with quota/RAM protection on small hosts.
-const MAX_CONCURRENT_GEMINI_CALLS = 2;
-let activeGeminiCalls = 0;
-const geminiCallQueue = [];
-
-async function runGeminiLimited(task) {
-  if (activeGeminiCalls >= MAX_CONCURRENT_GEMINI_CALLS) {
-    await new Promise(resolve => geminiCallQueue.push(resolve));
-  }
-  activeGeminiCalls++;
-  try {
-    return await task();
-  } finally {
-    activeGeminiCalls--;
-    const next = geminiCallQueue.shift();
-    if (next) next();
-  }
-}
 
 function isGeminiCoolingDown() { return Date.now() < geminiCooldownUntil; }
 
@@ -808,7 +786,7 @@ async function askGeminiImage(imageUrl, channelType) {
   if (cached) return cached;
 
   try {
-    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL, generationConfig: { maxOutputTokens: 96, temperature: 0 } });
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
     const imageResponse = await fetch(imageUrl);
     if (!imageResponse.ok) throw new Error(`Image fetch failed: HTTP ${imageResponse.status}`);
     const mimeType = (imageResponse.headers.get("content-type") || "application/octet-stream").split(";")[0];
@@ -817,10 +795,10 @@ async function askGeminiImage(imageUrl, channelType) {
     if (imageBytes.byteLength > MAX_IMAGE_BYTES) return { ...unavailable, reason: "Image exceeds scan size limit; media retained." };
     const base64Image = Buffer.from(imageBytes).toString("base64");
     const imagePrompt = `${IMAGE_PROMPTS[channelType] || IMAGE_PROMPTS["general-meme"]}\n\nGLOBAL SERIOUS-VIOLATION OVERRIDE: If the image clearly contains NSFW/explicit sexual material or prohibited sexualized content, classify it as status "rejected", serious true, and give a concise reason such as "NSFW or prohibited sexualized content". This override applies in every channel, even if the image otherwise matches the channel topic. Do not guess from ambiguous or non-sexual images. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":true|false,"reason":"short explanation"}`;
-    const result = await runGeminiLimited(() => model.generateContent([
+    const result = await model.generateContent([
       imagePrompt,
       { inlineData: { data: base64Image, mimeType } },
-    ]));
+    ]);
     const match = result.response.text().match(/\{[\s\S]*\}/);
     if (!match) return unavailable;
     const parsed = JSON.parse(match[0]);
@@ -848,10 +826,10 @@ async function checkTextForSeriousViolation(message) {
   if (cached) return cached;
 
   try {
-    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL, generationConfig: { maxOutputTokens: 96, temperature: 0 } });
-    const result = await runGeminiLimited(() => model.generateContent(
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+    const result = await model.generateContent(
       buildSeriousTextPrompt(text)
-    ));
+    );
     const match = result.response.text().match(/\{[\s\S]*\}/);
     if (!match) return { serious: false, reason: "" };
     const parsed = JSON.parse(match[0]);
@@ -905,8 +883,14 @@ async function scanMessageImages(images, channelType) {
     if (result.serious) return { serious: true, rejected: false, reason: result.reason };
   }
   const rejected = results.find(result => result.status === "rejected");
-  if (rejected) return { serious: false, rejected: true, reason: rejected.reason || "Image does not match this channel." };
-  return { serious: false, rejected: false, reason: results.some(r => r.status === "unknown") ? "Scanner inconclusive; media retained." : "Image check completed." };
+  if (rejected) return { serious: false, rejected: true, inconclusive: false, reason: rejected.reason || "Image does not match this channel." };
+  const inconclusive = results.some(r => r.status === "unknown");
+  return {
+    serious: false,
+    rejected: false,
+    inconclusive,
+    reason: inconclusive ? "Scanner inconclusive; media retained." : "Image check completed."
+  };
 }
 
 
@@ -933,7 +917,7 @@ async function validateMessage(message, rule) {
       "general-meme": "Post your own meme as a new message instead of replying to another member.",
       fanart: "Post your own Honor of Kings-related artwork image as a new message.",
     })[rule.type] || "Create a new on-topic post instead of replying.";
-    return { allowed: false, serious: false, reason: `Replying is not allowed in ${channelLabel}.` };
+    return { allowed: false, serious: false, reason: `Replying is not allowed in ${channelLabel}. ${requirement}` };
   }
 
   const hasMedia = images.length > 0 || videos.length > 0;
@@ -970,7 +954,7 @@ async function validateMessage(message, rule) {
     else if (contentForRules) specificReason = rule.type === 'general-meme' || rule.type === 'hok-meme'
       ? 'Unrelated conversation is not allowed; submit a meme image or video instead.'
       : `Wrong submission format: this channel requires the appropriate media, not text-only conversation. ${requirement}`;
-    if (specificReason) return { allowed: false, serious: false, reason: specificReason };
+    if (specificReason) return { allowed: false, serious: false, reason: `${specificReason} ${requirement}` };
   }
 
   // Only run serious-text AI review after deterministic format/reply rules.
@@ -1036,7 +1020,16 @@ async function validateMessage(message, rule) {
       const scan = await scanMessageImages(images, "skin");
       if (scan.serious) return { allowed: false, serious: true, reason: scan.reason };
       if (scan.rejected) return { allowed: false, serious: false, reason: scan.reason || "Not a skin showcase." };
-      return { allowed: true, serious: false, reason: scan.reason || "Scanner inconclusive; media retained." };
+      // Skin Showcase requires verification. If Gemini is unavailable, remove
+      // the post and log it for manual review instead of approving it by default.
+      if (scan.inconclusive) {
+        return {
+          allowed: false,
+          serious: false,
+          reason: "Skin image could not be verified because the scanner is unavailable. The post was removed pending manual review; please try again later."
+        };
+      }
+      return { allowed: true, serious: false, reason: scan.reason || "Image check completed." };
     }
     return { allowed: true, serious: false, reason: "Video accepted." };
   }
@@ -1480,7 +1473,14 @@ client.on("messageCreate", async (message) => {
     // This keeps it at the bottom while a post is being scanned, even if the
     // post is later removed. ensureSticky serializes work per channel.
     if (!(channel.isThread?.() && parentRule?.type === "build")) {
-      await refreshStickyAfterMessage(channel, rule);
+      // Sticky refresh is best-effort and must never prevent moderation.
+      // If Discord denies history access or sticky maintenance throws, continue
+      // into deterministic format validation and message deletion.
+      try {
+        await refreshStickyAfterMessage(channel, rule);
+      } catch (stickyError) {
+        console.error(`❌ Sticky refresh failed in #${channel.name}; moderation will continue:`, stickyError.message || stickyError);
+      }
     }
 
     const spam = detectSpam(message);
@@ -1732,7 +1732,6 @@ client.once("ready", async () => {
     `Serious=${SERIOUS_VIOLATION_TIMEOUT_MINUTES}m`
   );
   console.log(`🧠 Gemini model: ${GEMINI_MODEL}`);
-  console.log(`🛡️ Gemini scan concurrency capped at ${MAX_CONCURRENT_GEMINI_CALLS}; response output capped at 96 tokens.`);
   console.log(
     `📷 Image moderation: ${genAI ? "✅ Enabled (up to 3 images/message)" : "⚠️ Not configured"}`
   );
