@@ -21,10 +21,13 @@ const {
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
+// Category IDs are documented for organization only; moderation remains channel-specific.
+const COMMUNITY_PUBLIC_CATEGORY_ID = process.env.COMMUNITY_PUBLIC_CATEGORY_ID || "1533150080717160611";
+const LAMPOON_PRIVATE_CATEGORY_ID = process.env.LAMPOON_PRIVATE_CATEGORY_ID || "1533155325757362357";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || null;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
 const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || null; // Private admin/staff moderation log
-const REMINDER_LOG_CHANNEL_ID = process.env.REMINDER_LOG_CHANNEL_ID || null; // Member-facing moderation explanations
+const REMINDER_LOG_CHANNEL_ID = process.env.REMINDER_LOG_CHANNEL_ID || "1562888790857490462"; // Central member-facing moderation explanations
 const LAMPOON_ICON_URL = process.env.LAMPOON_ICON_URL || null; // Embed thumbnail only; intentionally separate from footer icon.
 const LAMPOON_FOOTER_ICON_URL = process.env.LAMPOON_FOOTER_ICON_URL || "https://cdn.discordapp.com/attachments/1532817641490874491/1562134042248478750/Dofoto_20261021_000232084.png?ex=6ad98af2&is=6ad83972&hm=795eb8acb674ed9005ce69ff28781ebeb87aeaab98be3ab60217d4ae035cdcf8&";
 
