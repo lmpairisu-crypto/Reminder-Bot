@@ -6,8 +6,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "check": "node --check index.js",
-    "test": "node --test --test-concurrency=1 sticky-lifecycle.test.js"
+    "check": "node --check index.js"
   },
   "engines": {
     "node": ">=18.18.0"

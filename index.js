@@ -104,6 +104,25 @@ const AI_CACHE_TTL_MS = 10 * 60 * 1000;
 const AI_CACHE_MAX_ENTRIES = 500;
 const MAX_IMAGES_TO_SCAN_PER_MESSAGE = 3;
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+// Keep a burst of submissions from creating dozens of simultaneous Gemini requests.
+// Two concurrent calls balances throughput with quota/RAM protection on small hosts.
+const MAX_CONCURRENT_GEMINI_CALLS = 2;
+let activeGeminiCalls = 0;
+const geminiCallQueue = [];
+
+async function runGeminiLimited(task) {
+  if (activeGeminiCalls >= MAX_CONCURRENT_GEMINI_CALLS) {
+    await new Promise(resolve => geminiCallQueue.push(resolve));
+  }
+  activeGeminiCalls++;
+  try {
+    return await task();
+  } finally {
+    activeGeminiCalls--;
+    const next = geminiCallQueue.shift();
+    if (next) next();
+  }
+}
 
 function isGeminiCoolingDown() { return Date.now() < geminiCooldownUntil; }
 
@@ -789,7 +808,7 @@ async function askGeminiImage(imageUrl, channelType) {
   if (cached) return cached;
 
   try {
-    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL, generationConfig: { maxOutputTokens: 96, temperature: 0 } });
     const imageResponse = await fetch(imageUrl);
     if (!imageResponse.ok) throw new Error(`Image fetch failed: HTTP ${imageResponse.status}`);
     const mimeType = (imageResponse.headers.get("content-type") || "application/octet-stream").split(";")[0];
@@ -798,10 +817,10 @@ async function askGeminiImage(imageUrl, channelType) {
     if (imageBytes.byteLength > MAX_IMAGE_BYTES) return { ...unavailable, reason: "Image exceeds scan size limit; media retained." };
     const base64Image = Buffer.from(imageBytes).toString("base64");
     const imagePrompt = `${IMAGE_PROMPTS[channelType] || IMAGE_PROMPTS["general-meme"]}\n\nGLOBAL SERIOUS-VIOLATION OVERRIDE: If the image clearly contains NSFW/explicit sexual material or prohibited sexualized content, classify it as status "rejected", serious true, and give a concise reason such as "NSFW or prohibited sexualized content". This override applies in every channel, even if the image otherwise matches the channel topic. Do not guess from ambiguous or non-sexual images. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":true|false,"reason":"short explanation"}`;
-    const result = await model.generateContent([
+    const result = await runGeminiLimited(() => model.generateContent([
       imagePrompt,
       { inlineData: { data: base64Image, mimeType } },
-    ]);
+    ]));
     const match = result.response.text().match(/\{[\s\S]*\}/);
     if (!match) return unavailable;
     const parsed = JSON.parse(match[0]);
@@ -829,10 +848,10 @@ async function checkTextForSeriousViolation(message) {
   if (cached) return cached;
 
   try {
-    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
-    const result = await model.generateContent(
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL, generationConfig: { maxOutputTokens: 96, temperature: 0 } });
+    const result = await runGeminiLimited(() => model.generateContent(
       buildSeriousTextPrompt(text)
-    );
+    ));
     const match = result.response.text().match(/\{[\s\S]*\}/);
     if (!match) return { serious: false, reason: "" };
     const parsed = JSON.parse(match[0]);
@@ -914,7 +933,7 @@ async function validateMessage(message, rule) {
       "general-meme": "Post your own meme as a new message instead of replying to another member.",
       fanart: "Post your own Honor of Kings-related artwork image as a new message.",
     })[rule.type] || "Create a new on-topic post instead of replying.";
-    return { allowed: false, serious: false, reason: `Replying is not allowed in ${channelLabel}. ${requirement}` };
+    return { allowed: false, serious: false, reason: `Replying is not allowed in ${channelLabel}.` };
   }
 
   const hasMedia = images.length > 0 || videos.length > 0;
@@ -951,7 +970,7 @@ async function validateMessage(message, rule) {
     else if (contentForRules) specificReason = rule.type === 'general-meme' || rule.type === 'hok-meme'
       ? 'Unrelated conversation is not allowed; submit a meme image or video instead.'
       : `Wrong submission format: this channel requires the appropriate media, not text-only conversation. ${requirement}`;
-    if (specificReason) return { allowed: false, serious: false, reason: `${specificReason} ${requirement}` };
+    if (specificReason) return { allowed: false, serious: false, reason: specificReason };
   }
 
   // Only run serious-text AI review after deterministic format/reply rules.
@@ -1713,6 +1732,7 @@ client.once("ready", async () => {
     `Serious=${SERIOUS_VIOLATION_TIMEOUT_MINUTES}m`
   );
   console.log(`🧠 Gemini model: ${GEMINI_MODEL}`);
+  console.log(`🛡️ Gemini scan concurrency capped at ${MAX_CONCURRENT_GEMINI_CALLS}; response output capped at 96 tokens.`);
   console.log(
     `📷 Image moderation: ${genAI ? "✅ Enabled (up to 3 images/message)" : "⚠️ Not configured"}`
   );

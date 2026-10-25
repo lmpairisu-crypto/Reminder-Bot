@@ -37,14 +37,14 @@ Keep all real tokens and API keys in **Render → Environment**, not in GitHub. 
 
 - **No direct messages:** The code in this repository does not call `user.send()`, `message.author.send()`, or `createDM()` to send moderation messages.
 - **No ephemeral moderation warnings:** Ordinary message-create events cannot receive true ephemeral replies. The bot deletes disallowed content and writes explanations to the configured moderation-log channels instead of sending a warning DM or a temporary warning message in the channel.
-- **Two separate logs:** `MOD_LOG_CHANNEL_ID` is the staff audit log (reason, context, suggested action, moderation action, submitted content, and message ID). `REMINDER_LOG_CHANNEL_ID` is a concise member-facing reminder (reason and next step only). Configure different channel IDs for the two logs. The bot may mention the member in the log channel, but a channel mention is not a DM.
+- **Two separate logs:** `MOD_LOG_CHANNEL_ID` is intended for staff; `REMINDER_LOG_CHANNEL_ID` is intended for member-facing explanations. Configure both if you want both logs. The bot may mention the member in the log channel, but a channel mention is not a DM.
 - **Ordinary content corrections:** Disallowed ordinary/off-topic content is deleted without a timeout; removal details are logged to the configured channels.
 - **Serious violations:** The message is deleted and logged. A 60-minute timeout may be applied if the bot has the required permission and role hierarchy permits it.
 - **Spam:** Five messages within ten seconds is treated as a serious spam burst. The spam timeout is one minute, except in Code Share and Strategy Forum channels, where the spam timeout is skipped.
 - **Code Share acknowledgements:** When replying to a code post, approved appreciation replies may receive “You're welcome! Happy to help!” and approved status replies may receive “Thank you! Your response has been noted!” These are public replies in the server channel, not DMs.
 - **AI scanner:** Scanner failures or inconclusive image results do not, by themselves, prove a violation. The scanner uses caching and quota cooldown protections and supports up to three images per message.
 - **Historical messages:** The bot moderates new messages only; it does not scan or delete historical messages on startup.
-- **Sticky reminders:** Sticky reminders are embed-only. The bot refreshes the sticky before scanning a new message, cleans up recognized duplicates, and aborts replacement if it cannot verify existing reminders. The hidden `LMP_REMINDER_STICKY` marker is not printed in the embed. HOK Strategy Forum uses a dedicated guide post and does not get a sticky. `/sticky-cleanup` removes recognized sticky reminders in the current channel without recreating one.
+- **Sticky reminders:** Sticky reminders are embed-only. The bot refreshes the sticky in eligible channels and cleans up recognized duplicates. HOK Strategy Forum uses a dedicated guide post and does not get a sticky. `/sticky-cleanup` removes recognized sticky reminders in the current channel without recreating one.
 
 ## Required Discord permissions
 
