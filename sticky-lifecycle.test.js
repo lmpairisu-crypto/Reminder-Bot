@@ -5,7 +5,7 @@ const path = require('node:path');
 
 // Load the production ensureSticky implementation with mocked Discord I/O. This
 // keeps the tests offline and avoids logging in to Discord or calling Gemini.
-const source = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+const source = fs.readFileSync(path.join(__dirname, 'index.js'), 'utf8');
 const start = source.indexOf('async function ensureSticky(channel, rule, refresh = true) {');
 const end = source.indexOf('\n// ============================================================\n// SECTION 16 — GEMINI IMAGE CLASSIFICATION', start);
 assert.ok(start >= 0 && end > start, 'ensureSticky function should be present');

@@ -1284,14 +1284,11 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
   } else if (/emoji|sticker|chat|text-only|unrelated|casual/.test(reasonLower)) {
     publicCorrection = "Do not post casual chat, emoji/sticker-only messages, or unrelated text here. Submit content intended for this channel.";
   }
-  // Keep the three main reminder headers exact. Include the actual offending
-  // text so members can understand which message needs correcting; for media-
-  // only submissions, the fallback makes it clear that there was no text body.
-  const offendingMessage = content || "[No text content — media, sticker, or attachment submission]";
+  // Keep public reminder logs concise: member/channel, specific reason, and correction only.
   const reminderEmbed = new EmbedBuilder()
     .setColor(details.color)
     .setTitle(details.title)
-    .setDescription(`${commonDescription}\n\n**Message that triggered this notice:**\n${offendingMessage.slice(0, 650)}\n\n**Specific reason:** ${details.reasonText.slice(0, 650)}\n\n**Correction to pass:** ${publicCorrection.slice(0, 650)}`)
+    .setDescription(`${commonDescription}\n\n**Specific reason:** ${details.reasonText.slice(0, 650)}\n\n**Correction to pass:** ${publicCorrection.slice(0, 650)}`)
     .setTimestamp();
 
   await Promise.all([
@@ -1801,7 +1798,6 @@ process.on("SIGTERM", async () => {
  // ============================================================
 
 const PORT = Number(process.env.PORT) || 10000;
-const http = require("node:http");
 
 const healthServer = http.createServer((req, res) => {
   const pathname = new URL(req.url || "/", "http://localhost").pathname;
@@ -1862,21 +1858,7 @@ if (!TOKEN) {
   });
 }
 
-if (!TOKEN) {
-  console.error(
-    "❌ DISCORD_TOKEN is missing. Set it in Render Environment settings."
-  );
-} else {
-  // There must be exactly ONE client.login() call in index.js.
-  client.login(TOKEN).then(() => {
-    console.log(
-      "🔐 Discord login handshake accepted; waiting for Gateway READY event."
-    );
-  }).catch((error) => {
-    console.error("❌ Discord login failed:", error);
-  });
-}
-
+// Discord login is started exactly once above.
 // ============================================================
 // SECTION 24 — MAINTENANCE NOTES AND SAFETY GUARANTEES
 // ============================================================
