@@ -1058,7 +1058,8 @@ async function validateMessage(message, rule) {
       const scan = await scanMessageImages(images, "hok-meme");
       if (scan.serious) return { allowed: false, serious: true, reason: scan.reason };
       if (scan.rejected) return { allowed: false, serious: false, reason: scan.reason || "Not a HOK meme." };
-      return { allowed: true, serious: false, reason: scan.reason || "Scanner inconclusive; media retained." };
+      if (scan.inconclusive) return { allowed: true, pendingScan: true, serious: false, reason: "Image pending scanner recovery; not approved yet." };
+      return { allowed: true, serious: false, reason: scan.reason || "Image check completed." };
     }
     return { allowed: true, serious: false, reason: "Video accepted." };
   }
@@ -1408,90 +1409,7 @@ async function processMessage(message, rule) {
   return { action: "deleted", result };
 }
 
-// SUBSECTION 18.4 — SAFE HISTORICAL CHAT CLEANUP
-// Only remove clearly invalid text-only chat from configured submission
-// channels. Never delete messages containing attachments/media, and never
-// run AI image checks during cleanup. This protects valid pass/code/media
-// submissions from being erased by historical cleanup.
-// ============================================================
-const HISTORICAL_CLEANUP_PAGE_SIZE = 100;
-const HISTORICAL_CLEANUP_DELAY_MS = 350;
-
-function getHistoricalChatViolation(message, rule) {
-  if (!message || message.author?.bot || message.pinned) return null;
-  // Any attached media is treated as a submission and is always preserved by
-  // this cleanup pass, regardless of captions or scanner availability.
-  if (message.attachments?.size) return null;
-
-  const content = String(message.content || '').trim();
-  const hasSticker = Boolean(message.stickers?.size);
-  // Stickers alone are not valid submissions in channels requiring a post.
-  if (!content && !hasSticker) return null;
-
-  // The strategy forum explicitly allows relevant discussion; historical
-  // cleanup must not guess whether its conversations are on-topic.
-  if (rule.type === 'build' || rule.allowChat) return null;
-
-  if (rule.type === 'code') {
-    // Preserve plain-text codes and allowed short status/appreciation replies.
-    if (containsPossibleCode(content)) return null;
-    if (message.reference && (isAllowedCodeReply(content) || isAppreciationReply(content))) return null;
-    return 'Event code or redemption screenshot required.';
-  }
-
-  // Historical cleanup reports the channel's configured requirement, not an
-  // implementation detail about the cleanup process. Missing media stays yellow.
-  const historicalReasons = {
-    profile: 'Profile image/video required.',
-    skin: 'Skin image/video required.',
-    hero: 'Gameplay highlight video required.',
-    'hok-meme': 'Honor of Kings meme image required.',
-    'general-meme': 'Meme image required.',
-    fanart: 'Fan art image required.',
-  };
-  if (Object.hasOwn(historicalReasons, rule.type)) return historicalReasons[rule.type];
-  return null;
-}
-
-async function cleanupHistoricalChat() {
-  console.log('🧹 Starting safe historical cleanup (text-only violations only; media submissions are protected)...');
-  let scanned = 0;
-  let removed = 0;
-  for (const [channelId, rule] of Object.entries(CHANNEL_RULES)) {
-    if (rule.type === 'build' || rule.allowChat) continue;
-    let channel;
-    try {
-      channel = await client.channels.fetch(channelId);
-      if (!channel?.isTextBased?.() || channel.type === ChannelType.GuildForum || !channel.messages?.fetch) continue;
-      let before;
-      while (true) {
-        const batch = await channel.messages.fetch({ limit: HISTORICAL_CLEANUP_PAGE_SIZE, ...(before ? { before } : {}) });
-        if (!batch.size) break;
-        scanned += batch.size;
-        for (const message of batch.values()) {
-          const reason = getHistoricalChatViolation(message, rule);
-          if (!reason) continue;
-          try {
-            await message.delete();
-            removed++;
-            await logRemovedMessage(message, reason, false, 'Historical text-only chat removed. Media submissions were not scanned or deleted.');
-            console.log(`🧹 Historical chat removed | channel=#${channel.name} (${channel.id}) | message=${message.id} | author=${message.author?.tag || message.author?.id}`);
-          } catch (error) {
-            console.error(`❌ Historical message delete failed | channel=${channelId} | message=${message.id}:`, error.message);
-          }
-          await sleep(150);
-        }
-        before = batch.last()?.id;
-        if (!before || batch.size < HISTORICAL_CLEANUP_PAGE_SIZE) break;
-        await sleep(HISTORICAL_CLEANUP_DELAY_MS);
-      }
-    } catch (error) {
-      console.error(`❌ Historical cleanup could not scan channel ${channelId}:`, error.message);
-    }
-    await sleep(HISTORICAL_CLEANUP_DELAY_MS);
-  }
-  console.log(`✅ Safe historical cleanup complete. Scanned ${scanned} messages; removed ${removed} text-only chat violations. Messages with attachments/media were preserved.`);
-}
+// Historical cleanup is intentionally disabled. Only new messages are moderated.
 
 // SUBSECTION 18.5 — LIVE MESSAGE EVENT HANDLERS AND STICKY REFRESH
 // ============================================================
