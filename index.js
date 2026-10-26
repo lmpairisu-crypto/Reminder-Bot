@@ -102,6 +102,30 @@ const AI_CACHE_MAX_ENTRIES = 500;
 const MAX_IMAGES_TO_SCAN_PER_MESSAGE = 3;
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 
+// Pending image scans retry while this process remains online.
+const PENDING_SCAN_RETRY_MS = 60 * 1000;
+const pendingScanQueue = new Map();
+function schedulePendingScanRetry(message, rule) {
+  const id = message.id;
+  const prior = pendingScanQueue.get(id);
+  if (prior?.timer) clearTimeout(prior.timer);
+  const entry = { message, rule, timer: null };
+  entry.timer = setTimeout(async () => {
+    try { await processMessage(message, rule, true); }
+    catch (error) {
+      console.error(`❌ Pending media retry failed for message ${id}:`, error.message || error);
+      schedulePendingScanRetry(message, rule);
+    }
+  }, PENDING_SCAN_RETRY_MS);
+  entry.timer.unref?.();
+  pendingScanQueue.set(id, entry);
+}
+function clearPendingScanRetry(message) {
+  const entry = pendingScanQueue.get(message.id);
+  if (entry?.timer) clearTimeout(entry.timer);
+  pendingScanQueue.delete(message.id);
+}
+
 function isGeminiCoolingDown() { return Date.now() < geminiCooldownUntil; }
 
 function noteGeminiError(error) {
@@ -931,7 +955,7 @@ async function validateMessage(message, rule) {
 
   // Deterministic rule-based reasons run before AI. These are ordinary channel
   // format corrections, not scam detection, and never receive a generic label.
-  if (isShowcaseRule && !hasMedia && !containsPossibleCode(contentForRules)) {
+  if (isShowcaseRule && !hasMedia) {
     const requirement = ({
       profile: 'Post your own Honor of Kings profile/account image or video as a new message.',
       skin: 'Post your own image/video clearly showing an Honor of Kings skin as a new message.',
@@ -954,15 +978,13 @@ async function validateMessage(message, rule) {
     else if (contentForRules) specificReason = rule.type === 'general-meme' || rule.type === 'hok-meme'
       ? 'Unrelated conversation is not allowed; submit a meme image or video instead.'
       : `Wrong submission format: this channel requires the appropriate media, not text-only conversation. ${requirement}`;
-    if (specificReason) return { allowed: false, serious: false, reason: `${specificReason} ${requirement}` };
+    if (specificReason) {
+      const finalReason = specificReason.includes(requirement) ? specificReason : `${specificReason} ${requirement}`;
+      return { allowed: false, serious: false, reason: finalReason };
+    }
   }
 
-  // Only run serious-text AI review after deterministic format/reply rules.
-  // Do not let a text-only AI false positive delete a photo/video with a caption.
-  if (images.length === 0 && videos.length === 0 && !hasVoiceAttachment && !hasGifAttachment) {
-    const seriousText = await checkTextForSeriousViolation(message);
-    if (seriousText.serious) return { allowed: false, serious: true, reason: seriousText.reason };
-  }
+  // Decide code/forum format before any optional AI text scan.
   const hasCode = containsPossibleCode(message.content);
   const isOnlyText = !hasMedia && !hasCode && message.content.trim().length > 0;
 
@@ -982,11 +1004,22 @@ async function validateMessage(message, rule) {
     return { allowed: false, serious: false, reason: "Please keep discussion related to Honor of Kings." };
   }
 
+  // Event-code validation must happen before optional AI text scanning too.
+  if (rule.type === "code") return validateEventCode(message);
+
+  // Only text-valid channels reach this optional serious-text AI scan. Text-only
+  // posts in submission channels were rejected deterministically above.
+  if (images.length === 0 && videos.length === 0 && !hasVoiceAttachment && !hasGifAttachment) {
+    const seriousText = await checkTextForSeriousViolation(message);
+    if (seriousText.serious) return { allowed: false, serious: true, reason: seriousText.reason };
+  }
+
   if (rule.type === "general-meme") {
     if (images.length || videos.length) {
       if (images.length) {
         const scan = await scanMessageImages(images, "general-meme");
         if (scan.serious) return { allowed: false, serious: true, reason: scan.reason };
+        if (scan.inconclusive) return { allowed: false, pendingScan: true, serious: false, reason: "Image scan unavailable; submission is pending and will be retried automatically." };
       }
       return { allowed: true, serious: false, reason: "Meme/media submission accepted." };
     }
@@ -1004,7 +1037,8 @@ async function validateMessage(message, rule) {
       const scan = await scanMessageImages(images, "profile");
       if (scan.serious) return { allowed: false, serious: true, reason: scan.reason };
       if (scan.rejected) return { allowed: false, serious: false, reason: scan.reason || "Not a profile showcase." };
-      return { allowed: true, serious: false, reason: scan.reason || "Scanner inconclusive; media retained." };
+      if (scan.inconclusive) return { allowed: false, pendingScan: true, serious: false, reason: "Image scan unavailable; submission is pending and will be retried automatically." };
+      return { allowed: true, serious: false, reason: scan.reason || "Image check completed." };
     }
     return { allowed: true, serious: false, reason: "Video accepted." };
   }
@@ -1020,15 +1054,7 @@ async function validateMessage(message, rule) {
       const scan = await scanMessageImages(images, "skin");
       if (scan.serious) return { allowed: false, serious: true, reason: scan.reason };
       if (scan.rejected) return { allowed: false, serious: false, reason: scan.reason || "Not a skin showcase." };
-      // Skin Showcase requires verification. If Gemini is unavailable, remove
-      // the post and log it for manual review instead of approving it by default.
-      if (scan.inconclusive) {
-        return {
-          allowed: false,
-          serious: false,
-          reason: "Skin image could not be verified because the scanner is unavailable. The post was removed pending manual review; please try again later."
-        };
-      }
+      if (scan.inconclusive) return { allowed: false, pendingScan: true, serious: false, reason: "Image scan unavailable; submission is pending and will be retried automatically." };
       return { allowed: true, serious: false, reason: scan.reason || "Image check completed." };
     }
     return { allowed: true, serious: false, reason: "Video accepted." };
@@ -1055,7 +1081,8 @@ async function validateMessage(message, rule) {
       const scan = await scanMessageImages(images, "hok-meme");
       if (scan.serious) return { allowed: false, serious: true, reason: scan.reason };
       if (scan.rejected) return { allowed: false, serious: false, reason: scan.reason || "Not a HOK meme." };
-      return { allowed: true, serious: false, reason: scan.reason || "Scanner inconclusive; media retained." };
+      if (scan.inconclusive) return { allowed: false, pendingScan: true, serious: false, reason: "Image scan unavailable; submission is pending and will be retried automatically." };
+      return { allowed: true, serious: false, reason: scan.reason || "Image check completed." };
     }
     return { allowed: true, serious: false, reason: "Video accepted." };
   }
@@ -1072,7 +1099,8 @@ async function validateMessage(message, rule) {
     const scan = await scanMessageImages(images, "fanart");
     if (scan.serious) return { allowed: false, serious: true, reason: scan.reason };
     if (scan.rejected) return { allowed: false, serious: false, reason: scan.reason || "Not HOK fan art." };
-    return { allowed: true, serious: false, reason: scan.reason || "Scanner inconclusive; media retained." };
+    if (scan.inconclusive) return { allowed: false, pendingScan: true, serious: false, reason: "Image scan unavailable; submission is pending and will be retried automatically." };
+    return { allowed: true, serious: false, reason: scan.reason || "Image check completed." };
   }
 
   if (rule.type === "build") return validateBuildPost(message);
@@ -1231,6 +1259,13 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
   if (!message?.guild) return;
   const content = String(message.content || "[No text content — message may contain attachments or embeds]").slice(0, 1000);
   const details = getRemovalLogDetails(message, reason, serious, actionTaken);
+  const receivedAt = Number(message.createdTimestamp || Date.now());
+  const loggedAt = Date.now();
+  const elapsedMs = Math.max(0, loggedAt - receivedAt);
+  const elapsedSeconds = Math.floor(elapsedMs / 1000);
+  const elapsedLabel = elapsedSeconds >= 3600
+    ? `${Math.floor(elapsedSeconds / 3600)}h ${Math.floor((elapsedSeconds % 3600) / 60)}m ${elapsedSeconds % 60}s`
+    : elapsedSeconds >= 60 ? `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s` : `${elapsedSeconds}s`;
   const commonDescription = `**Member:** <@${message.author?.id}>\n**Channel:** <#${message.channel?.id}>`;
 
   // PRIVATE MOD LOG: restore the classic compact gold audit. No member mention,
@@ -1245,6 +1280,9 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
       { name: "📋 Reason", value: details.reasonText.slice(0, 1024), inline: false },
       { name: "💬 Message", value: content || "[Empty message]", inline: false },
       { name: "🔗 Message ID", value: "`" + (message.id || "Unknown ID") + "`", inline: false },
+      { name: "🕒 Message sent", value: `<t:${Math.floor(receivedAt / 1000)}:F>`, inline: false },
+      { name: "🗑️ Removed / audit logged", value: `<t:${Math.floor(loggedAt / 1000)}:F>`, inline: false },
+      { name: "⏱️ Time to remove", value: elapsedLabel, inline: false },
       { name: "🚨 Serious", value: serious ? "Yes" : "No", inline: false }
     )
     .setTimestamp();
@@ -1313,6 +1351,7 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
 }
 
 async function deleteOnly(message, reason) {
+  clearPendingScanRetry(message);
   await message.delete().catch(error =>
     console.error("❌ Delete failed:", error.message)
   );
@@ -1343,6 +1382,7 @@ function detectSpam(message) {
 }
 
 async function deleteAndModerate(message, reason, serious) {
+  clearPendingScanRetry(message);
   await message.delete().catch(e => console.error("❌ Delete failed:", e.message));
   await message.reactions.removeAll().catch(err => console.log('⚠️ Could not remove reactions:', err.message));
   const violation = await registerViolation(message, reason, serious, false);
@@ -1352,16 +1392,18 @@ async function deleteAndModerate(message, reason, serious) {
   await logRemovedMessage(message, reason, Boolean(serious), action);
 }
 
-async function processMessage(message, rule) {
+async function processMessage(message, rule, isPendingRetry = false) {
   const result = await validateMessage(message, rule);
+  if (result.pendingScan) {
+    schedulePendingScanRetry(message, rule);
+    return { action: "pending-scan", result };
+  }
+  if (isPendingRetry || pendingScanQueue.has(message.id)) clearPendingScanRetry(message);
   if (result.allowed) return { action: "allowed", result };
-  
   if (result.serious) {
     await deleteAndModerate(message, result.reason, true);
     return { action: "serious", result };
   }
-  
-  // Casual/off-topic: DELETE ONLY — no warning, no points
   await deleteOnly(message, result.reason);
   return { action: "deleted", result };
 }
