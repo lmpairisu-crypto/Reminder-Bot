@@ -954,8 +954,15 @@ async function validateMessage(message, rule) {
     else if (/https?:\/\/|www\./i.test(contentForRules)) specificReason = 'Unrelated link-only conversation is not a valid channel submission.';
     else if (contentForRules) specificReason = rule.type === 'general-meme' || rule.type === 'hok-meme'
       ? 'Unrelated conversation is not allowed; submit a meme image or video instead.'
-      : `Wrong submission format: this channel requires the appropriate media, not text-only conversation. ${requirement}`;
-    if (specificReason) return { allowed: false, serious: false, reason: `${specificReason} ${requirement}` };
+      : 'Wrong submission format: this channel requires the appropriate media, not text-only conversation.';
+    if (specificReason) {
+      // Keep the explanation concise: some format reasons already include the
+      // channel requirement, so append it only when it is not already present.
+      const reason = specificReason.toLowerCase().includes(requirement.toLowerCase())
+        ? specificReason
+        : `${specificReason} ${requirement}`;
+      return { allowed: false, serious: false, reason };
+    }
   }
 
   const hasCode = containsPossibleCode(message.content);
@@ -1192,7 +1199,36 @@ async function registerViolation(message, reason, serious = false, isSpam = fals
 }
 
 function getRemovalLogDetails(message, reason, serious, actionTaken) {
-  const reasonText = String(reason || "No reason provided").trim();
+  // Keep the reason factual and separate from the member-facing correction.
+  // Some validators used to concatenate both, which duplicated the instruction
+  // in the public reminder. Also collapse repeated identical sentences.
+  let reasonText = String(reason || "No reason provided").trim();
+  // Strip channel instructions accidentally appended by older validators. The
+  // correction is rendered separately below, so the reason must describe only
+  // why the message failed—not repeat the action the member should take.
+  const appendedRequirements = [
+    "Post your own Honor of Kings profile/account image or video as a new message.",
+    "Post your own image/video clearly showing an Honor of Kings skin as a new message.",
+    "Upload your own Honor of Kings gameplay highlight video as a new message.",
+    "Post your own Honor of Kings-related meme image or video as a new message.",
+    "Post a meme image or video as a new message.",
+    "Post your own Honor of Kings-related artwork image as a new message."
+  ];
+  for (const requirement of appendedRequirements) {
+    const escaped = requirement.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    reasonText = reasonText.replace(new RegExp(`\\s*${escaped}(?:\\s*${escaped})*\\s*$`, "i"), "").trim();
+  }
+  if (/^casual chatting is not allowed in this submission channel\./i.test(reasonText)) {
+    reasonText = "Casual chatting is not allowed in this submission channel.";
+  }
+  const sentenceParts = reasonText.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [reasonText];
+  const seenSentences = new Set();
+  reasonText = sentenceParts.map(part => part.trim()).filter(part => {
+    const key = part.toLowerCase().replace(/\s+/g, " ");
+    if (seenSentences.has(key)) return false;
+    seenSentences.add(key);
+    return true;
+  }).join(" ").trim();
   // A message is a media-submission violation only when it actually contains
   // media OR the reason explicitly says that required media/format was missing
   // or invalid. Historical text-only cleanup reasons often mention that media
@@ -1236,11 +1272,12 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
   const details = getRemovalLogDetails(message, reason, serious, actionTaken);
   const commonDescription = `**Member:** <@${message.author?.id}>\n**Channel:** <#${message.channel?.id}>`;
 
-  // PRIVATE MOD LOG: restore the classic compact gold audit. No member mention,
-  // no duplicated context/action paragraphs, and no public-log formatting here.
+  // PRIVATE MOD LOG: use the same severity color as the member-facing reminder.
+  // Yellow = ordinary text/format removal; orange = rejected media; red = serious violation.
+  // Keep the stable audit title and fields while color-coding every moderation-log embed.
   const modEmbed = new EmbedBuilder()
-    .setColor(GOLD)
-    .setTitle("🗑️ MESSAGE REMOVED")
+    .setColor(details.color)
+    .setTitle(details.title)
     .setDescription("A message was removed by the Lampoon moderation system.")
     .addFields(
       { name: "👤 User", value: `${message.author?.tag || message.author?.username || "Unknown user"}\n\`${message.author?.id || "Unknown ID"}\``, inline: false },
@@ -1305,13 +1342,9 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
   } else if (/emoji|sticker|chat|text-only|unrelated|casual/.test(reasonLower)) {
     publicCorrection = "Do not post casual chat, emoji/sticker-only messages, or unrelated text here. Submit content intended for this channel.";
   }
-  // Keep public reminder logs concise: member/channel, specific reason, and correction only.
-  // If the specific reason already contains the channel requirement, avoid
-  // repeating the same "post your own ..." instruction in the correction.
-  const reasonAlreadyHasCorrection = /post your own|submit your own|attach (an? )?(image|video)|requires? an? (image|video)|requires? .*video/i.test(details.reasonText);
-  const reminderDescription = reasonAlreadyHasCorrection
-    ? `${commonDescription}\n\n**Specific reason:** ${details.reasonText.slice(0, 900)}`
-    : `${commonDescription}\n\n**Specific reason:** ${details.reasonText.slice(0, 650)}\n\n**Correction to pass:** ${publicCorrection.slice(0, 400)}`;
+  // Always keep reason and correction as separate fields. The reason has been
+  // normalized above so channel instructions never swallow the correction.
+  const reminderDescription = `${commonDescription}\n\n**Specific reason:** ${details.reasonText.slice(0, 650)}\n\n**Correction to pass:** ${publicCorrection.slice(0, 400)}`;
   const reminderEmbed = new EmbedBuilder()
     .setColor(details.color)
     .setTitle(details.title)
