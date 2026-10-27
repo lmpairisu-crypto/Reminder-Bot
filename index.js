@@ -230,14 +230,14 @@ const CHANNEL_RULES = {
   "1541019893552644187": {
     type: "code",
     name: "Community Event Code Share",
-    description: "Share Honor of Kings event codes, redemption screenshots, and instructions.",
+    description: "Share screenshots/images related to Honor of Kings event codes.",
     allowReplies: true,
     allowChat: false,
   },
   "1544182436353810432": {
     type: "code",
     name: "Lampoon Event Share Code",
-    description: "Share Honor of Kings event codes, redemption screenshots, and instructions.",
+    description: "Share screenshots/images related to Honor of Kings event codes.",
     allowReplies: true,
     allowChat: false,
   },
@@ -295,7 +295,7 @@ const STICKY_REMINDER_CONFIG = {
     hero: "Share your Honor of Kings hero highlights and memorable gameplay moments!",
     "hok-meme": "Share your Honor of Kings memes, funny screenshots, edits, reactions, and parody content!",
     "general-meme": "Share memes, funny images, reactions, edits, and entertainment with the community!",
-    code: "Share Honor of Kings event codes, redemption screenshots, and helpful redemption information!",
+    code: "Share screenshots/images related to Honor of Kings event codes!",
     fanart: "Share your Honor of Kings fan art, drawings, illustrations, and creative edits!",
     build: "Share useful Honor of Kings questions, match analysis, builds, tips, and strategies!",
   },
@@ -382,10 +382,8 @@ function normalizeShortReply(text) {
   return String(text || "").trim().toLowerCase().replace(/[.,!?;:]+/g, " ").replace(/\s+/g, " ").trim();
 }
 function isAllowedCodeReply(text) {
-  const value = normalizeShortReply(text);
-  if (ALLOWED_CODE_REPLIES.includes(value)) return true;
-  // Allow short combinations such as "done thank you" without opening general chat.
-  return value.length <= 80 && /^(done|used|invalid|expired|not work|error)( thank you| thanks| thank you so much| thanks a lot)?$/.test(value);
+  // Only the explicitly listed status phrases are valid; no appended chatter.
+  return ALLOWED_CODE_REPLIES.includes(normalizeShortReply(text));
 }
 function isAppreciationReply(text) {
   return APPRECIATION_REPLIES.includes(normalizeShortReply(text));
@@ -852,14 +850,20 @@ async function checkTextForSeriousViolation(message) {
 
 function validateEventCode(message) {
   const images = getImages(message);
+  const videos = getVideos(message);
   const text = String(message.content || "").trim();
-  if (containsPossibleCode(text)) return { allowed: true, serious: false, reason: "Code detected." };
-  if (images.length) return { allowed: true, serious: false, reason: "Code screenshot accepted." };
-  // Instructions are allowed when they clearly describe redemption/how-to steps.
-  if (text.length >= 20 && /\b(redeem|redemption|event code|enter the code|claim the reward|go to|open the game|tap|click|instructions|step 1)\b/i.test(text)) {
-    return { allowed: true, serious: false, reason: "Redemption instructions accepted." };
+  const hasGif = [...(message.attachments?.values?.() || [])].some(a =>
+    /\.gif$/i.test(a.name || "") || /image\/gif/i.test(a.contentType || ""));
+  // Code Share submissions are screenshot/image-only. Only exact, approved
+  // status or appreciation phrases may be used as replies to another post.
+  if (message.reference && !images.length && !videos.length &&
+      (isAllowedCodeReply(text) || isAppreciationReply(text))) {
+    return { allowed: true, serious: false, reason: isAppreciationReply(text) ? "Appreciation reply allowed." : "Allowed code status reply." };
   }
-  return { allowed: false, serious: false, reason: "Share an Honor of Kings event code, redemption screenshot, or redemption instructions. Only the listed status/appreciation replies are allowed as replies to a code post." };
+  if (images.length && !videos.length && !hasGif) {
+    return { allowed: true, serious: false, reason: "Screenshot/image submission accepted." };
+  }
+  return { allowed: false, serious: false, reason: "Code Share accepts screenshots/images only. Post a screenshot as a new message, or use an approved status/appreciation phrase when replying to a code post." };
 }
 
 function validateBuildPost(message) {
@@ -930,17 +934,14 @@ async function validateMessage(message, rule) {
   const hasGifAttachment = [...(message.attachments?.values?.() || [])].some(a => /\.gif$/i.test(a.name || '') || /image\/gif/i.test(a.contentType || ''));
   const hasVoiceAttachment = [...(message.attachments?.values?.() || [])].some(a => /audio\/|voice-message/i.test(a.contentType || '') || /\.(ogg|opus|mp3|wav|m4a)$/i.test(a.name || ''));
 
+  const allowsGif = rule.type === "hok-meme" || rule.type === "general-meme";
+  if (hasGifAttachment && !allowsGif && rule.type !== "code") {
+    return { allowed: false, serious: false, reason: "GIF format is not accepted in this channel." };
+  }
+
   // Deterministic rule-based reasons run before AI. These are ordinary channel
   // format corrections, not scam detection, and never receive a generic label.
   if (isShowcaseRule && !hasMedia) {
-    const requirement = ({
-      profile: 'Post your own Honor of Kings profile/account image or video as a new message.',
-      skin: 'Post your own image/video clearly showing an Honor of Kings skin as a new message.',
-      hero: 'Upload your own Honor of Kings gameplay highlight video as a new message.',
-      'hok-meme': 'Post your own Honor of Kings-related meme image or video as a new message.',
-      'general-meme': 'Post a meme image or video as a new message.',
-      fanart: 'Post your own Honor of Kings-related artwork image as a new message.'
-    })[rule.type];
     let specificReason = '';
     if (hasVoiceAttachment) specificReason = 'Voice messages are not allowed in this submission channel.';
     else if (hasGifAttachment) specificReason = 'GIF submissions are not accepted as the required channel format.';
@@ -956,12 +957,10 @@ async function validateMessage(message, rule) {
       ? 'Unrelated conversation is not allowed; submit a meme image or video instead.'
       : 'Wrong submission format: this channel requires the appropriate media, not text-only conversation.';
     if (specificReason) {
-      // Keep the explanation concise: some format reasons already include the
-      // channel requirement, so append it only when it is not already present.
-      const reason = specificReason.toLowerCase().includes(requirement.toLowerCase())
-        ? specificReason
-        : `${specificReason} ${requirement}`;
-      return { allowed: false, serious: false, reason };
+      // Keep the reason limited to WHY the post failed. The required action is
+      // rendered separately in the reminder log; appending it here duplicates
+      // the correction and makes the embed harder to read.
+      return { allowed: false, serious: false, reason: specificReason };
     }
   }
 
@@ -1072,12 +1071,13 @@ async function validateMessage(message, rule) {
   }
 
   if (rule.type === "fanart") {
-    if (!images.length) {
+    if (!images.length && !videos.length) {
       const reason = message.reference
         ? "Commenting on another member's HOK Fan-Art Share post is not allowed. Post your own Honor of Kings fan-art image as a new message instead."
         : "HOK Fan-Art Share requires an image of your Honor of Kings-related artwork. Text or video alone does not meet this channel's format."
       return { allowed: false, serious: false, reason };
     }
+    if (!images.length && videos.length) return { allowed: true, serious: false, reason: "Fan art video accepted." };
     const scan = await scanMessageImages(images, "fanart");
     if (scan.serious) return { allowed: false, serious: true, reason: scan.reason };
     if (scan.rejected) return { allowed: false, serious: false, reason: scan.reason || "Not HOK fan art." };
@@ -1295,11 +1295,23 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
   // PUBLIC REMINDER LOG: concise member-facing notice, deliberately not an audit copy.
   let publicCorrection = "Review the channel topic and repost in the required format.";
   const reasonLower = details.reasonText.toLowerCase();
+  const channelRule = CHANNEL_RULES[message.channel?.id] || CHANNEL_RULES[message.channel?.parentId];
+  // For text-only showcase violations, derive the correction from the channel
+  // rule, not from the reason text (which should describe only the violation).
+  if (!serious && !message.attachments?.size && channelRule &&
+      ['profile', 'skin', 'hero'].includes(channelRule.type)) {
+    publicCorrection = ({
+      profile: "Post your own Honor of Kings profile/account image or video as a new message.",
+      skin: "Post your own Honor of Kings skin image or video as a new message.",
+      hero: "Upload your own Honor of Kings gameplay highlight video as a new message."
+    })[channelRule.type];
+  }
   if (serious) {
     if (/nsfw|sexual|porn|nude|explicit/.test(reasonLower)) publicCorrection = "Do not repost sexualized or NSFW content. Contact a moderator if you believe this was a mistake.";
     else if (/spam|repeated|messages within/.test(reasonLower)) publicCorrection = "Stop repeated posting. Send one message at a time and follow moderator instructions.";
     else publicCorrection = "Stop the prohibited behavior and review the server rules.";
-  } else if (details.color === "#FF8C00") {
+  } else if (!channelRule || message.attachments?.size || !['profile', 'skin', 'hero'].includes(channelRule.type)) {
+    if (details.color === "#FF8C00") {
     if (/fan.?art/.test(reasonLower)) publicCorrection = "Submit an image of your own Honor of Kings-related artwork. Text or video alone is not enough.";
     else if (/skin/.test(reasonLower)) publicCorrection = "Submit an image or video clearly showing an Honor of Kings skin.";
     else if (/hero|highlight/.test(reasonLower)) publicCorrection = "Submit your own Honor of Kings gameplay highlight video.";
@@ -1308,7 +1320,7 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
     else if (/not.*match|does not match|not a .*meme|not .*fan.?art|rejected/i.test(reasonLower)) publicCorrection = "Replace the rejected media with content that clearly matches this channel's topic and requirements.";
     else publicCorrection = "Submit media that matches this channel's topic and format.";
   } else if (/code|redemption/.test(reasonLower)) {
-    publicCorrection = "Post an event code or redemption screenshot. Replies may only contain a code status or brief appreciation.";
+    publicCorrection = "Post a screenshot/image as a new message. Replies may only contain an approved code status or exact appreciation phrase.";
   } else if (/fan.?art/.test(reasonLower)) {
     publicCorrection = "Post your own Honor of Kings-related artwork image as a new message.";
   } else if (/profile/.test(reasonLower)) {
@@ -1341,6 +1353,7 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
     publicCorrection = "Post the required image or video as a new message, following the channel topic.";
   } else if (/emoji|sticker|chat|text-only|unrelated|casual/.test(reasonLower)) {
     publicCorrection = "Do not post casual chat, emoji/sticker-only messages, or unrelated text here. Submit content intended for this channel.";
+    }
   }
   // Always keep reason and correction as separate fields. The reason has been
   // normalized above so channel instructions never swallow the correction.
