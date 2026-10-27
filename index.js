@@ -1404,8 +1404,27 @@ async function processMessage(message, rule) {
 // SUBSECTION 18.5 — LIVE MESSAGE EVENT HANDLERS AND STICKY REFRESH
 // ============================================================
 async function refreshStickyAfterMessage(channel, rule) {
-  // No delay: await completion before the message enters spam/AI moderation.
-  await ensureSticky(channel, rule, true);
+  // Required order for every new submission:
+  // 1) remove/unpin the previous sticky, 2) send the replacement at the bottom,
+  // 3) only after this awaited function returns may spam/media scanning begin.
+  // ensureSticky may return null after internally catching a Discord API error;
+  // log that explicitly so a failed sticky move is never mistaken for success.
+  if (channel?.isThread?.() || channel?.type === ChannelType.GuildForum || rule.type === "build") {
+    return { skipped: true, sticky: null };
+  }
+  if (stickyDisabledChannels.has(channel.id)) {
+    console.warn(`⚠️ Sticky refresh skipped in #${channel.name}: sticky is disabled in this channel.`);
+    return { skipped: true, sticky: null };
+  }
+
+  console.log(`📌 Sticky refresh started in #${channel.name} before moderation scan.`);
+  const sticky = await ensureSticky(channel, rule, true);
+  if (!sticky) {
+    console.error(`❌ Sticky refresh did not complete in #${channel.name}; continuing moderation after the failed sticky attempt.`);
+    return { skipped: false, sticky: null, failed: true };
+  }
+  console.log(`✅ Sticky is at the bottom of #${channel.name}; moderation scan may start now.`);
+  return { skipped: false, sticky, failed: false };
 }
 
 
@@ -1429,7 +1448,7 @@ client.on("messageCreate", async (message) => {
       try {
         await refreshStickyAfterMessage(channel, rule);
       } catch (stickyError) {
-        console.error(`❌ Sticky refresh failed in #${channel.name}; moderation will continue:`, stickyError.message || stickyError);
+        console.error(`❌ Sticky refresh failed in #${channel.name} before moderation scan; moderation will continue:`, stickyError.message || stickyError);
       }
     }
 
