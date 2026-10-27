@@ -1687,7 +1687,7 @@ client.on("interactionCreate", async (interaction) => {
 
 let readyWarning = null;
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   if (readyWarning) clearTimeout(readyWarning);
   console.log("✅ Discord Gateway READY event received.");
   console.log("🔐 Discord Gateway READY event received.");
