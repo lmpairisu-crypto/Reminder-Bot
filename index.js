@@ -863,7 +863,7 @@ function validateEventCode(message) {
   if (images.length && !videos.length && !hasGif) {
     return { allowed: true, serious: false, reason: "Screenshot/image submission accepted." };
   }
-  return { allowed: false, serious: false, reason: "Code Share accepts screenshots/images only. Post a screenshot as a new message, or use an approved status/appreciation phrase when replying to a code post." };
+  return { allowed: false, serious: false, reason: "Message does not meet Code Share submission rules." };
 }
 
 function validateBuildPost(message) {
@@ -1240,29 +1240,8 @@ function getRemovalLogDetails(message, reason, serious, actionTaken) {
   const hasMedia = hasAttachments;
   const color = serious ? "#FF3030" : (hasMedia ? "#FF8C00" : "#FFD700");
   const title = serious ? "🔴 ACTION VIOLATION" : (hasMedia ? "🟠 MEDIA CORRECTION" : "🟡 MESSAGE REMOVE");
-  let why;
-  let requiredAction;
-
-  if (serious && /nsfw|sexual|porn|nude|explicit/i.test(reasonText)) {
-    why = `The moderation check identified the submission as NSFW or prohibited sexualized content. It was removed under the server's serious content-safety rules. Detected reason: ${reasonText}`;
-    requiredAction = "Do not repost the prohibited content. Review the server's content-safety rules; contact a moderator if you believe the detection was mistaken.";
-  } else if (serious && /spam|messages within|repeated/i.test(reasonText)) {
-    why = `The message triggered the configured serious-spam or repeated-violation rule. Detected reason: ${reasonText}`;
-    requiredAction = "Stop repeated posting and send one message at a time. Follow the channel rules and any moderator instructions.";
-  } else if (serious) {
-    why = `The moderation check flagged this action as a serious rule violation. Detected reason: ${reasonText}`;
-    requiredAction = "Do not repeat the prohibited behavior. Review the applicable server rule and contact a moderator if you need clarification.";
-  } else if (hasMedia) {
-    why = `The submitted media did not pass this channel's configured content or format checks. Detected reason: ${reasonText}`;
-    requiredAction = "Review the channel topic and submit media that matches its requirements. If the removal appears incorrect, ask a moderator to review it.";
-  } else if (/comment|reply|emoji|text-only|plain text|chat|unrelated|post too short|no code found|empty message/i.test(reasonText)) {
-    why = `The message or reply did not meet this channel's configured submission rules. Detected reason: ${reasonText}`;
-    requiredAction = "Read the channel topic and send a corrected, relevant message in the required format. For Code Share, use only an allowed code-status or appreciation reply when replying to a code post.";
-  } else {
-    why = `The message did not pass this channel's configured validation. Detected reason: ${reasonText}`;
-    requiredAction = "Review the channel topic and resubmit content that meets its requirements. Contact a moderator if you believe this was a mistake.";
-  }
-
+  const why = reasonText;
+  const requiredAction = "Follow the correction shown in the member reminder.";
   return { color, title, reasonText, why, requiredAction, actionTaken: actionTaken || "Message deleted." };
 }
 
@@ -1274,7 +1253,6 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
 
   // PRIVATE MOD LOG: use the same severity color as the member-facing reminder.
   // Yellow = ordinary text/format removal; orange = rejected media; red = serious violation.
-  // Keep the stable audit title and fields while color-coding every moderation-log embed.
   const modEmbed = new EmbedBuilder()
     .setColor(details.color)
     .setTitle(details.title)
@@ -1292,71 +1270,37 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
     )
     .setTimestamp();
 
-  // PUBLIC REMINDER LOG: concise member-facing notice, deliberately not an audit copy.
-  let publicCorrection = "Review the channel topic and repost in the required format.";
+  // One concise, channel-specific correction. Never copy the reason into this field.
   const reasonLower = details.reasonText.toLowerCase();
   const channelRule = CHANNEL_RULES[message.channel?.id] || CHANNEL_RULES[message.channel?.parentId];
-  // For text-only showcase violations, derive the correction from the channel
-  // rule, not from the reason text (which should describe only the violation).
-  if (!serious && !message.attachments?.size && channelRule &&
-      ['profile', 'skin', 'hero'].includes(channelRule.type)) {
-    publicCorrection = ({
-      profile: "Post your own Honor of Kings profile/account image or video as a new message.",
-      skin: "Post your own Honor of Kings skin image or video as a new message.",
-      hero: "Upload your own Honor of Kings gameplay highlight video as a new message."
-    })[channelRule.type];
-  }
+  let publicCorrection = "Review the channel topic and submit content in the required format.";
   if (serious) {
     if (/nsfw|sexual|porn|nude|explicit/.test(reasonLower)) publicCorrection = "Do not repost sexualized or NSFW content. Contact a moderator if you believe this was a mistake.";
-    else if (/spam|repeated|messages within/.test(reasonLower)) publicCorrection = "Stop repeated posting. Send one message at a time and follow moderator instructions.";
-    else publicCorrection = "Stop the prohibited behavior and review the server rules.";
-  } else if (!channelRule || message.attachments?.size || !['profile', 'skin', 'hero'].includes(channelRule.type)) {
-    if (details.color === "#FF8C00") {
-    if (/fan.?art/.test(reasonLower)) publicCorrection = "Submit an image of your own Honor of Kings-related artwork. Text or video alone is not enough.";
-    else if (/skin/.test(reasonLower)) publicCorrection = "Submit an image or video clearly showing an Honor of Kings skin.";
-    else if (/hero|highlight/.test(reasonLower)) publicCorrection = "Submit your own Honor of Kings gameplay highlight video.";
-    else if (/gif/.test(reasonLower)) publicCorrection = "Do not use a GIF for this submission. Upload the required image or video in a supported format for this channel.";
-    else if (/voice message|audio/.test(reasonLower)) publicCorrection = "Voice/audio messages are not valid submissions here. Upload the image or video required by the channel topic.";
-    else if (/not.*match|does not match|not a .*meme|not .*fan.?art|rejected/i.test(reasonLower)) publicCorrection = "Replace the rejected media with content that clearly matches this channel's topic and requirements.";
-    else publicCorrection = "Submit media that matches this channel's topic and format.";
-  } else if (/code|redemption/.test(reasonLower)) {
-    publicCorrection = "Post a screenshot/image as a new message. Replies may only contain an approved code status or exact appreciation phrase.";
-  } else if (/fan.?art/.test(reasonLower)) {
-    publicCorrection = "Post your own Honor of Kings-related artwork image as a new message.";
-  } else if (/profile/.test(reasonLower)) {
+    else if (/spam|repeated|messages within/.test(reasonLower)) publicCorrection = "Stop repeated posting and send one message at a time.";
+    else publicCorrection = "Stop the prohibited behavior and follow the server rules.";
+  } else if (channelRule?.type === "code") {
+    publicCorrection = "Post a screenshot/image as a new message. Replies may only contain one approved status or exact appreciation phrase.";
+  } else if (channelRule?.type === "profile") {
     publicCorrection = "Post your own Honor of Kings profile/account image or video as a new message.";
-  } else if (/skin/.test(reasonLower)) {
-    publicCorrection = "Post an image/video showing an Honor of Kings skin as a new message.";
-  } else if (/hero|highlight/.test(reasonLower)) {
-    publicCorrection = "Post your own Honor of Kings gameplay highlight video.";
-  } else if (/comment|reply/.test(reasonLower)) {
-    publicCorrection = "Do not reply to other members' showcase posts; create your own on-topic post.";
-  } else if (/animated emoji/.test(reasonLower)) {
-    publicCorrection = "Do not send animated emoji-only messages. Post the channel's required content as a new message.";
-  } else if (/emoji-only|emojis/.test(reasonLower)) {
-    publicCorrection = "Emoji-only messages are not accepted. Post the channel's required content as a new message.";
-  } else if (/sticker/.test(reasonLower)) {
-    publicCorrection = "Sticker-only messages are not accepted. Post the channel's required content as a new message.";
+  } else if (channelRule?.type === "skin") {
+    publicCorrection = "Post your own image or video clearly showing an Honor of Kings skin as a new message.";
+  } else if (channelRule?.type === "hero") {
+    publicCorrection = "Upload your own Honor of Kings gameplay highlight video as a new message.";
+  } else if (channelRule?.type === "fanart") {
+    publicCorrection = "Post your own Honor of Kings-related artwork as an image or video in a new message.";
+  } else if (channelRule?.type === "hok-meme") {
+    publicCorrection = "Post an Honor of Kings-related meme as an image, video, or GIF in a new message.";
+  } else if (channelRule?.type === "general-meme") {
+    publicCorrection = "Post a meme as an image, video, or GIF in a new message. Sexualized content is a serious violation.";
+  } else if (channelRule?.type === "build") {
+    publicCorrection = "Keep the discussion relevant to Honor of Kings strategies, builds, heroes, gameplay, or tips.";
   } else if (/gif/.test(reasonLower)) {
-    publicCorrection = "Use the required channel format instead of a GIF-only submission.";
-  } else if (/voice message/.test(reasonLower)) {
-    publicCorrection = "Do not send voice messages here. Submit the content and media format listed in the channel topic.";
-  } else if (/replying|reply|comment/.test(reasonLower)) {
-    publicCorrection = "Do not reply to another member here. Create your own qualifying submission as a new message.";
-  } else if (/small talk/.test(reasonLower)) {
-    publicCorrection = "Small talk is not accepted here. Submit the content required by the channel topic.";
-  } else if (/casual chatting|casual chat/.test(reasonLower)) {
-    publicCorrection = "Casual chatting is not allowed here. Submit the content required by the channel topic.";
-  } else if (/unrelated conversation|unrelated link/.test(reasonLower)) {
-    publicCorrection = "Keep the post relevant to this channel and submit the required content in the correct format.";
-  } else if (/wrong submission format|text-only/.test(reasonLower)) {
-    publicCorrection = "Post the required image or video as a new message, following the channel topic.";
-  } else if (/emoji|sticker|chat|text-only|unrelated|casual/.test(reasonLower)) {
-    publicCorrection = "Do not post casual chat, emoji/sticker-only messages, or unrelated text here. Submit content intended for this channel.";
-    }
+    publicCorrection = "Upload the required image or video in a format supported by this channel.";
+  } else if (/emoji|sticker|casual chat|small talk|text-only|wrong submission format|unrelated conversation/.test(reasonLower)) {
+    publicCorrection = "Submit the content and media format required by this channel as a new message.";
+  } else if (/not.*match|does not match|rejected|not a .*meme|not .*fan.?art/.test(reasonLower)) {
+    publicCorrection = "Replace the rejected media with content that clearly matches this channel's topic.";
   }
-  // Always keep reason and correction as separate fields. The reason has been
-  // normalized above so channel instructions never swallow the correction.
   const reminderDescription = `${commonDescription}\n\n**Specific reason:** ${details.reasonText.slice(0, 650)}\n\n**Correction to pass:** ${publicCorrection.slice(0, 400)}`;
   const reminderEmbed = new EmbedBuilder()
     .setColor(details.color)
