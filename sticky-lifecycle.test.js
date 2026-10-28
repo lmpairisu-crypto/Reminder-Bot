@@ -19,6 +19,7 @@ function setup({ scan, initial = [] } = {}) {
   const stickyDisabledChannels = new Set();
   const stickyLastRefreshAt = new Map();
   let sends = 0;
+  let lastInheritedThumbnail = null;
   let id = initial.length;
 
   const channel = {
@@ -26,11 +27,11 @@ function setup({ scan, initial = [] } = {}) {
     isThread: () => false,
     isTextBased: () => true,
     messages: { fetch: async () => ({ size: 0 }) },
-    async send() {
+    async send(payload = {}) {
       sends++;
       const message = {
         id: `sticky-${++id}`, createdTimestamp: Date.now(), pinned: false,
-        embeds: [{ title: '📢 READ REMINDER!' }],
+        embeds: payload.embeds || [{ title: '📢 READ REMINDER!' }],
         async delete() { const index = stickies.findIndex(item => item.id === message.id); if (index >= 0) stickies.splice(index, 1); },
         async unpin() { message.pinned = false; },
       };
@@ -40,12 +41,15 @@ function setup({ scan, initial = [] } = {}) {
   };
 
   const findExistingStickies = scan || (async () => [...stickies]);
-  const createStickyEmbed = () => ({ mocked: true });
+  const createStickyEmbed = (_rule, inheritedThumbnail = null) => {
+    lastInheritedThumbnail = inheritedThumbnail;
+    return { mocked: true, thumbnail: inheritedThumbnail ? { url: inheritedThumbnail } : null };
+  };
   const ChannelType = { GuildForum: 'forum' };
   const fn = new Function('ChannelType', 'stickyDisabledChannels', 'stickyLocks', 'stickyRefreshRequested', 'stickyMessages', 'stickyLastRefreshAt', 'findExistingStickies', 'createStickyEmbed', `${ensureStickySource}; return ensureSticky;`)(
     ChannelType, stickyDisabledChannels, stickyLocks, stickyRefreshRequested, stickyMessages, stickyLastRefreshAt, findExistingStickies, createStickyEmbed,
   );
-  return { ensureSticky: fn, channel, stickies, stickyDisabledChannels, stickyMessages, get sends() { return sends; } };
+  return { ensureSticky: fn, channel, stickies, stickyDisabledChannels, stickyMessages, get sends() { return sends; }, get lastInheritedThumbnail() { return lastInheritedThumbnail; } };
 }
 
 const rule = { type: 'skin', name: 'SKIN SHOWCASE', description: 'Test rules' };
@@ -106,4 +110,20 @@ test('a sticky that cannot be deleted is not replaced', async () => {
   assert.equal(result, null);
   assert.equal(env.sends, 0);
   assert.equal(env.stickies.length, 1);
+});
+
+
+test('sticky refresh preserves the existing thumbnail while consolidating old reminders', async () => {
+  const thumbnailUrl = 'https://example.com/old-sticky-thumbnail.png';
+  let env;
+  const old = {
+    id: 'old-with-thumbnail', createdTimestamp: 1, pinned: false,
+    embeds: [{ title: '📢 READ REMINDER!', thumbnail: { url: thumbnailUrl } }],
+    async delete() { const index = env.stickies.findIndex(item => item.id === old.id); if (index >= 0) env.stickies.splice(index, 1); },
+  };
+  env = setup({ initial: [old] });
+  await env.ensureSticky(env.channel, rule, true);
+  assert.equal(env.lastInheritedThumbnail, thumbnailUrl);
+  assert.equal(env.stickies.length, 1);
+  assert.equal(env.stickies[0].embeds[0].thumbnail.url, thumbnailUrl);
 });

@@ -23,6 +23,8 @@ const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || null;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.8-flash";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || null;
+const OPENAI_VISION_MODEL = process.env.OPENAI_VISION_MODEL || "gpt-4.1-mini";
 const MOD_LOG_CHANNEL_ID = process.env.MOD_LOG_CHANNEL_ID || null; // Private admin/staff moderation log
 const REMINDER_LOG_CHANNEL_ID = process.env.REMINDER_LOG_CHANNEL_ID || null; // Member-facing moderation explanations
 const LAMPOON_ICON_URL = process.env.LAMPOON_ICON_URL || null; // Embed thumbnail only; intentionally separate from footer icon.
@@ -107,10 +109,19 @@ function isGeminiCoolingDown() { return Date.now() < geminiCooldownUntil; }
 function noteGeminiError(error) {
   const message = String(error?.message || error || "");
   if (/429|quota|rate.?limit|resource.?exhausted/i.test(message)) {
-    const retryMatch = message.match(/retry in\s+([0-9.]+)\s*s/i);
-    const delaySeconds = retryMatch ? Number(retryMatch[1]) : 3600;
+    // Google may return either seconds or a compound duration such as
+    // "10h56m47.06s". Honor the provider's retry window instead of retrying every minute.
+    let delaySeconds = 3600;
+    const compound = message.match(/retry in\s+((?:\d+h)?(?:\d+m)?(?:[0-9.]+s))/i);
+    const seconds = message.match(/retry in\s+([0-9.]+)\s*s/i);
+    if (compound) {
+      const d = compound[1];
+      delaySeconds = (Number((d.match(/(\d+)h/i) || [])[1] || 0) * 3600) +
+        (Number((d.match(/(\d+)m/i) || [])[1] || 0) * 60) +
+        Number((d.match(/([0-9.]+)s/i) || [])[1] || 0);
+    } else if (seconds) delaySeconds = Number(seconds[1]);
     geminiCooldownUntil = Date.now() + Math.min(Math.max(delaySeconds, 60), 24 * 60 * 60) * 1000;
-    console.warn("⏸️ Gemini quota/rate limit detected; AI calls paused temporarily.");
+    console.warn(`⏸️ Gemini quota/rate limit detected; calls paused for about ${Math.ceil(delaySeconds / 60)} minute(s).`);
   }
 }
 
@@ -160,7 +171,9 @@ const client = new Client({
 const MODERATION_TIMEOUT_MINUTES = 0;
 const REPEATED_VIOLATION_TIMEOUT_MINUTES = 0;
 const SERIOUS_VIOLATION_TIMEOUT_MINUTES = 60;
-const SPAM_TIMEOUT_MINUTES = 1;
+const SPAM_TIMEOUT_MINUTES = 10;
+const SPAM_TIMEOUT_LEVELS = [{ at: 10, minutes: 10 }, { at: 15, minutes: 30 }, { at: 20, minutes: 60 }];
+const SPAM_COUNTER_CAP = 20;
 const GOLD = "#D4AF37";
 const AVISALA = "<a:Avisala:1542448826265243660>";
 const SPAM_WINDOW_MS = 10_000;
@@ -228,11 +241,11 @@ const CHANNEL_RULES = {
     allowChat: false,
   },
   "1541019893552644187": {
-    type: "code",
+    type: "event-code",
     name: "Community Event Code Share",
-    description: "Share screenshots/images related to Honor of Kings event codes.",
+    description: "Share Honor of Kings event codes or text related to event-code sharing. This channel has its own format validation and does not use Code Share verification.",
     allowReplies: true,
-    allowChat: false,
+    allowChat: true,
   },
   "1544182436353810432": {
     type: "code",
@@ -269,6 +282,7 @@ const PINNED_TITLES = {
   "hok-meme": `${AVISALA} HOK MEME SHARE`,
   "general-meme": `${AVISALA} LAMPOON STANDPOST MEME`,
   code: `${AVISALA} EVENT CODE SHARE`,
+  "event-code": `${AVISALA} EVENT CODE SHARE`,
   fanart: `${AVISALA} FAN ART`,
   build: `${AVISALA} HOK STRATEGY FORUM`,
 };
@@ -286,6 +300,7 @@ const STICKY_REMINDER_CONFIG = {
     "hok-meme": `${AVISALA} HOK MEMES SHARE`,
     "general-meme": `${AVISALA} STANDPOST MEME SHARE`,
     code: `${AVISALA} REDEMPTION CODE SHARE`,
+    "event-code": `${AVISALA} EVENT CODE SHARE`,
     fanart: `${AVISALA} HOK FAN-ART SHARE`,
     build: `${AVISALA} HOK STRATEGY FORUM`,
   },
@@ -296,6 +311,7 @@ const STICKY_REMINDER_CONFIG = {
     "hok-meme": "Share your Honor of Kings memes, funny screenshots, edits, reactions, and parody content!",
     "general-meme": "Share memes, funny images, reactions, edits, and entertainment with the community!",
     code: "Share screenshots/images related to Honor of Kings event codes!",
+    "event-code": "Share event codes or text related to event-code sharing. No screenshot is required; Code Share verification does not apply here.",
     fanart: "Share your Honor of Kings fan art, drawings, illustrations, and creative edits!",
     build: "Share useful Honor of Kings questions, match analysis, builds, tips, and strategies!",
   },
@@ -306,6 +322,7 @@ const STICKY_REMINDER_CONFIG = {
     "hok-meme": "🚫 Do not use this channel for general chatting. Keep posts related to Honor of Kings memes. Unrelated content may be removed.",
     "general-meme": "🚫 Do not reply to other members' posts. Keep this channel dedicated to memes and entertainment. Unrelated content may be removed.",
     code: "🚫 No general chat. Replies are limited to code status (done, used, invalid, expired, not work, error) and brief appreciation such as 'Thank you'. Unrelated content may be removed.",
+    "event-code": "✅ Event Code Share has its own rules. Text-only and code-only submissions are allowed; screenshots are not required. Use the event code format when posting a code. Code Share verification and screenshot-only rules do not apply.",
     fanart: "🚫 Do not reply to other members' artwork posts. Keep this channel dedicated to fan art and creative works. Unrelated content may be removed.",
     build: "🚫 Keep posts and discussions related to Honor of Kings strategy. Unrelated content may be removed.",
   },
@@ -325,6 +342,11 @@ const stickyDisabledChannels = new Set();
 const stickyLastRefreshAt = new Map();
 const recentUserMessages = new Map();
 const activeSpamPenaltyUntil = new Map();
+const spamIncidents = new Map(); // one editable Reminder Log summary per guild/user incident
+const spamCountedMessageIds = new Set(); // prevent duplicate counts across concurrent handlers
+const auditLoggedMessageIds = new Set(); // one private audit entry per removed message
+const spamActionLocks = new Map();
+const reminderLogLocks = new Map();
 
 // Anti-spam controls are defined in Section 05; per-user tracking maps live here.
 
@@ -452,7 +474,13 @@ function createPinnedEmbed(rule) {
   const displayName = PINNED_TITLES[rule.type] || `${AVISALA} ${rule.name}`;
   let details = [];
 
-  if (rule.type === "code") {
+  if (rule.type === "event-code") {
+    details = [
+      `**How to share**\nShare an event code or text related to event-code sharing. Screenshots are not required.`,
+      `**Event code format**\nUse \`Code: XSVAB7C3 - 986\` (code label optional; keep the code and 3-digit suffix in the expected format).`,
+      `**Important**\nThis channel uses its own event-code format validation. Code Share screenshot rules and verification do not apply here.`
+    ];
+  } else if (rule.type === "code") {
     details = [
       `**How to share**\nShare an Honor of Kings event code, redemption screenshot, or redemption instructions.`,
       `**Allowed replies only**\n✅ **done** — successfully claimed\n⚠️ **used** — already claimed\n❌ **invalid** — code not recognized\n⏰ **expired** — no longer active\n🔧 **not work** — couldn't redeem\n🐛 **error** — something went wrong`,
@@ -484,13 +512,16 @@ function createPinnedEmbed(rule) {
   return applyLampoonFooter(embed);
 }
 
-function createStickyEmbed(rule) {
+function createStickyEmbed(rule, inheritedThumbnail = null) {
   const { titles, introductions, channelRules } = STICKY_REMINDER_CONFIG;
   const embed = new EmbedBuilder()
     .setColor(GOLD)
     .setTitle("📢 READ REMINDER!")
     .setDescription(`**${titles[rule.type] || rule.name || "CHANNEL REMINDER"}**\n\n${introductions[rule.type] || rule.description}\n\n**CHANNEL RULES**\n\n${channelRules[rule.type] || "🚫 Keep posts relevant to this channel. Unrelated content may be removed."}`);
-  if (LAMPOON_ICON_URL) embed.setThumbnail(LAMPOON_ICON_URL);
+  // Preserve the prior sticky thumbnail during migration/refresh when the
+  // deployment environment does not currently define LAMPOON_ICON_URL.
+  const thumbnailUrl = LAMPOON_ICON_URL || inheritedThumbnail;
+  if (thumbnailUrl) embed.setThumbnail(thumbnailUrl);
   return applyLampoonFooter(embed);
 }
 
@@ -692,8 +723,17 @@ async function ensureSticky(channel, rule, refresh = true) {
       // sticky movement and moderation. Only discover history on cold start/cache miss.
       const cachedSticky = stickyMessages.get(channel.id);
       let oldStickies;
-      if (cachedSticky) {
-        oldStickies = [cachedSticky];
+      if (cachedSticky?.id) {
+        // Validate the cached Discord message before trying to move it. A stale
+        // cache entry (deleted manually or by Discord) must not block refreshing
+        // the sticky beneath the latest member post.
+        const currentSticky = await channel.messages.fetch(cachedSticky.id).catch(() => null);
+        if (currentSticky && isStickyBotMessage(currentSticky)) {
+          oldStickies = [currentSticky];
+        } else {
+          stickyMessages.delete(channel.id);
+          oldStickies = await findExistingStickies(channel, 2000);
+        }
       } else {
         oldStickies = await findExistingStickies(channel, 2000);
       }
@@ -722,6 +762,15 @@ async function ensureSticky(channel, rule, refresh = true) {
         continue;
       }
 
+      // Carry forward a thumbnail from the newest old sticky before removing it.
+      // This prevents a deployment with a missing LAMPOON_ICON_URL from silently
+      // dropping an image that was present in the previous reminder.
+      const inheritedThumbnail = oldStickies
+        .slice()
+        .sort((a, b) => (b.createdTimestamp || 0) - (a.createdTimestamp || 0))
+        .map(sticky => sticky.embeds?.[0]?.thumbnail?.url)
+        .find(url => typeof url === "string" && /^https?:\/\//i.test(url)) || null;
+
       let deleteFailed = false;
       for (const oldSticky of oldStickies) {
         if (stickyDisabledChannels.has(channel.id)) return null;
@@ -744,7 +793,7 @@ async function ensureSticky(channel, rule, refresh = true) {
       // after awaited deletions so a late continuation cannot recreate the sticky.
       if (stickyDisabledChannels.has(channel.id)) return null;
 
-      const stickyEmbed = createStickyEmbed(rule);
+      const stickyEmbed = createStickyEmbed(rule, inheritedThumbnail);
       const newSticky = await channel.send({ embeds: [stickyEmbed] });
       stickyMessages.set(channel.id, newSticky);
       stickyLastRefreshAt.set(channel.id, Date.now());
@@ -809,6 +858,53 @@ async function askGeminiImage(imageUrl, channelType) {
   }
 }
 
+// Secondary image scanner. It receives the SAME attachment image that Gemini
+// attempted; a Gemini quota outage must not silently skip the image.
+async function askOpenAIImage(imageUrl, channelType) {
+  const unavailable = { status: "unknown", serious: false, reason: "OpenAI fallback unavailable; media retained.", provider: "OpenAI" };
+  if (!OPENAI_API_KEY) return { ...unavailable, reason: "OpenAI fallback is not configured; media retained." };
+  const cacheKey = `openai:image:${channelType}:${imageUrl}`;
+  const cached = getCachedAIResult(cacheKey);
+  if (cached) return cached;
+  try {
+    const imageResponse = await fetch(imageUrl);
+    if (!imageResponse.ok) throw new Error(`Image fetch failed: HTTP ${imageResponse.status}`);
+    const mimeType = (imageResponse.headers.get("content-type") || "application/octet-stream").split(";")[0];
+    if (!mimeType.startsWith("image/")) throw new Error(`Attachment is not an image (${mimeType})`);
+    const imageBytes = await imageResponse.arrayBuffer();
+    if (imageBytes.byteLength > MAX_IMAGE_BYTES) return { ...unavailable, reason: "Image exceeds scan size limit; media retained." };
+    const prompt = `${IMAGE_PROMPTS[channelType] || IMAGE_PROMPTS["general-meme"]}\n\nGLOBAL SERIOUS-VIOLATION OVERRIDE: If the image clearly contains NSFW/explicit sexual material or prohibited sexualized content, return status rejected and serious true. Do not guess; use unknown if uncertain or unable to assess. Return JSON only: {"status":"allowed"|"rejected"|"unknown","serious":true|false,"reason":"short explanation"}`;
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: OPENAI_VISION_MODEL,
+        temperature: 0,
+        max_tokens: 250,
+        messages: [{ role: "user", content: [
+          { type: "text", text: prompt },
+          { type: "image_url", image_url: { url: `data:${mimeType};base64,${Buffer.from(imageBytes).toString("base64")}`, detail: "high" } }
+        ] }]
+      })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(`OpenAI HTTP ${response.status}: ${body?.error?.message || "request failed"}`);
+    const raw = body?.choices?.[0]?.message?.content || "";
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) return unavailable;
+    const parsed = JSON.parse(match[0]);
+    const status = ["allowed", "rejected", "unknown"].includes(parsed.status) ? parsed.status : "unknown";
+    const value = { status, serious: parsed.serious === true, reason: String(parsed.reason || "").slice(0, 500), provider: "OpenAI" };
+    if (status !== "unknown") setCachedAIResult(cacheKey, value);
+    return value;
+  } catch (error) {
+    console.error("❌ OpenAI fallback image check failed:", error.message || error);
+    await sendModerationLog(new EmbedBuilder().setColor("#FF9900").setTitle("⚠️ AI FALLBACK SCANNER FAILURE")
+      .setDescription(`**Scanner:** OpenAI image fallback\n**Channel type:** ${channelType || "Unknown"}\n**Error:** ${String(error.message || error).slice(0, 900)}\n**Action:** Inconclusive result; media is not deleted based on scanner failure.`).setTimestamp());
+    return { ...unavailable, reason: "OpenAI fallback failed; media retained." };
+  }
+}
+
 // Serious-text scan helper
 
 async function checkTextForSeriousViolation(message) {
@@ -854,16 +950,49 @@ function validateEventCode(message) {
   const text = String(message.content || "").trim();
   const hasGif = [...(message.attachments?.values?.() || [])].some(a =>
     /\.gif$/i.test(a.name || "") || /image\/gif/i.test(a.contentType || ""));
-  // Code Share submissions are screenshot/image-only. Only exact, approved
-  // status or appreciation phrases may be used as replies to another post.
+
+  // Replies are allowed only when the entire reply is one approved phrase.
   if (message.reference && !images.length && !videos.length &&
       (isAllowedCodeReply(text) || isAppreciationReply(text))) {
     return { allowed: true, serious: false, reason: isAppreciationReply(text) ? "Appreciation reply allowed." : "Allowed code status reply." };
   }
+
+  // A screenshot/image post may include explanatory text. Do not require OCR
+  // or reject it simply because the member wrote text with the screenshot.
   if (images.length && !videos.length && !hasGif) {
-    return { allowed: true, serious: false, reason: "Screenshot/image submission accepted." };
+    return { allowed: true, serious: false, reason: "Screenshot/image submission accepted, including accompanying text." };
   }
-  return { allowed: false, serious: false, reason: "Message does not meet Code Share submission rules." };
+
+  // Text-only posts are valid only when they contain a code, not arbitrary chat.
+  // Accept a labelled code or a reasonably code-like alphanumeric token with digits.
+  const labelledCode = /\bcode\s*:\s*[A-Z0-9][A-Z0-9 -]{3,30}/i.test(text);
+  const codeToken = /\b(?=[A-Z0-9-]{6,}\b)(?=[A-Z0-9-]*\d)[A-Z0-9]+(?:-[A-Z0-9]+)*\b/i.test(text);
+  if (!images.length && !videos.length && text && (labelledCode || codeToken)) {
+    return { allowed: true, serious: false, reason: "Text-only Code Share submission contains a code." };
+  }
+
+  return { allowed: false, serious: false, reason: "Code Share requires a code in text or a screenshot/image. Unrelated text and unapproved replies are not allowed." };
+}
+
+function validateEventCodeSharePost(message) {
+  const text = String(message.content || "").trim();
+  // Event Code Share accepts text-only discussion and code-only posts. If a
+  // code-like token is present, validate it against this channel's own format;
+  // never require an image and never call the Code Share verification path.
+  const eventCodePattern = /^(?:code\s*:\s*)?[A-Z0-9]{8}\s*-\s*\d{3}$/i;
+  const labelledCodePattern = /\bcode\s*:/i.test(text);
+  const codeLike = /[A-Z0-9]{5,}\s*-\s*\d{2,}/i.test(text) || labelledCodePattern;
+  if (!text) {
+    if (message.attachments?.size) return { allowed: true, serious: false, reason: "Event Code Share attachment accepted; no screenshot requirement applies." };
+    return { allowed: false, serious: false, reason: "Event Code Share requires text or an attachment." };
+  }
+  if (eventCodePattern.test(text)) {
+    return { allowed: true, serious: false, reason: "Event code matches the Event Code Share format." };
+  }
+  if (codeLike) {
+    return { allowed: false, serious: false, reason: "Event code does not match the required Event Code Share format." };
+  }
+  return { allowed: true, serious: false, reason: "Text-only Event Code Share submission accepted; Code Share verification is not used here." };
 }
 
 function validateBuildPost(message) {
@@ -883,18 +1012,26 @@ function validateBuildPost(message) {
 async function scanMessageImages(images, channelType) {
   const results = [];
   for (const attachment of images.slice(0, MAX_IMAGES_TO_SCAN_PER_MESSAGE)) {
-    const result = await askGeminiImage(attachment.url, channelType);
+    // First scanner: Gemini. If it is unavailable, quota-limited, or returns
+    // unknown, send that exact same attachment to the OpenAI fallback scanner.
+    let result = await askGeminiImage(attachment.url, channelType);
+    if (result.status === "unknown" && !result.serious) {
+      console.warn(`🔁 Gemini inconclusive for #${channelType}; sending same image to OpenAI fallback.`);
+      const fallback = await askOpenAIImage(attachment.url, channelType);
+      if (fallback.status !== "unknown" || fallback.serious) result = fallback;
+      else result = { ...fallback, reason: `Both scanners inconclusive. Gemini: ${result.reason} OpenAI: ${fallback.reason}` };
+    }
     results.push(result);
-    if (result.serious) return { serious: true, rejected: false, reason: result.reason };
+    if (result.serious) return { serious: true, rejected: false, reason: result.reason, scanner: result.provider || "Gemini" };
   }
   const rejected = results.find(result => result.status === "rejected");
-  if (rejected) return { serious: false, rejected: true, inconclusive: false, reason: rejected.reason || "Image does not match this channel." };
+  if (rejected) return { serious: rejected.serious === true, rejected: true, inconclusive: false, reason: rejected.reason || "Image does not match this channel.", scanner: rejected.provider || "Gemini" };
   const inconclusive = results.some(r => r.status === "unknown");
   return {
     serious: false,
     rejected: false,
     inconclusive,
-    reason: inconclusive ? "Scanner inconclusive; media retained." : "Image check completed."
+    reason: inconclusive ? "Both configured scanners were inconclusive/unavailable; media retained." : "Image check completed."
   };
 }
 
@@ -902,6 +1039,10 @@ async function scanMessageImages(images, channelType) {
 async function validateMessage(message, rule) {
   const images = getImages(message);
   const videos = getVideos(message);
+
+  // Event Code Share is deliberately isolated from screenshot-only Code Share.
+  // Route it before reply, media, AI, or Code Share verification logic.
+  if (rule.type === "event-code") return validateEventCodeSharePost(message);
 
   // Block rule-based reply violations before any AI scam/safety review.
   // The deleted reply text remains the Message field in the audit embed.
@@ -1099,6 +1240,49 @@ async function validateMessage(message, rule) {
 // Preserve the full audit trail for staff: member, channel, reason, context,
 // suggested correction, action taken, original content, and message ID.
 
+async function updateSpamAuditSummary(incidentKey, message = null) {
+  const incident = spamIncidents.get(incidentKey);
+  if (!incident || !message?.guild || !MOD_LOG_CHANNEL_ID) return null;
+  try {
+    const channel = await client.channels.fetch(MOD_LOG_CHANNEL_ID);
+    if (!channel?.isTextBased()) return null;
+
+    const channels = [...new Map((incident.removals || []).map(item => [item.channelId, item])).values()];
+    const removalLines = (incident.removals || []).slice(-15).map((item, index) =>
+      `**${index + 1}.** <#${item.channelId}> — **${item.type}**\n${item.content.slice(0, 220)}\nMessage: \`${item.messageId}\``
+    );
+    const timeoutText = incident.timeoutApplied
+      ? `Applied: ${incident.timeoutMinutes} minutes`
+      : incident.timeoutMinutes
+        ? `Not applied (${incident.timeoutMinutes} minutes intended)`
+        : "None";
+    const embed = new EmbedBuilder()
+      .setColor(incident.seriousLogged ? "#FF3030" : incident.count >= 10 ? "#FF8C00" : "#FFD700")
+      .setTitle("🚨 SPAM INCIDENT — AUDIT SUMMARY")
+      .setDescription(`**Member:** <@${message.author.id}>\n**User ID:** \`${message.author.id}\`\n**Incident scope:** Server-wide across channels`)
+      .addFields(
+        { name: "📍 Channels affected", value: channels.length ? channels.map(item => `<#${item.channelId}>`).join("\n").slice(0, 1024) : "None", inline: false },
+        { name: "🗑️ Remove Count", value: String(incident.count || 0), inline: true },
+        { name: "⏱️ Timeout", value: timeoutText, inline: true },
+        { name: "🔴 Serious violation", value: incident.seriousLogged ? "Threshold reached (20 violations)" : "Not reached", inline: true },
+        { name: "🧾 Removed messages (latest 15)", value: removalLines.length ? removalLines.join("\n\n").slice(0, 1024) : "No removals recorded yet.", inline: false }
+      )
+      .setFooter({ text: `Incident key: ${incidentKey} • Full individual records remain above/below this summary` })
+      .setTimestamp();
+
+    if (incident.auditSummaryMessageId) {
+      const existing = await channel.messages.fetch(incident.auditSummaryMessageId).catch(() => null);
+      if (existing) return await existing.edit({ embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [] } });
+    }
+    const sent = await channel.send({ embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [] } });
+    incident.auditSummaryMessageId = sent.id;
+    return sent;
+  } catch (error) {
+    console.error("❌ Spam audit summary update failed:", error.message || error);
+    return null;
+  }
+}
+
 async function sendModerationLog(embed, memberId = null) {
   // Private MOD LOG: staff-only channel configured with MOD_LOG_CHANNEL_ID.
   if (!MOD_LOG_CHANNEL_ID) {
@@ -1121,26 +1305,52 @@ async function sendModerationLog(embed, memberId = null) {
 // SUBSECTION 18.2 — PUBLIC REMINDER LOG (MEMBER-FACING)
 // ============================================================
 // This is intentionally a separate, concise log; it is not an audit copy.
-async function sendReminderLog(embed, memberId = null) {
-  // Public/member-facing REMINDER LOG: separate from the private staff MOD LOG.
+async function sendReminderLog(embed, memberId = null, incidentKey = null) {
+  if (incidentKey) {
+    const previous = reminderLogLocks.get(incidentKey) || Promise.resolve();
+    const current = previous.catch(() => {}).then(() => sendReminderLogUnlocked(embed, memberId, incidentKey));
+    reminderLogLocks.set(incidentKey, current.catch(() => {}));
+    return current;
+  }
+  return sendReminderLogUnlocked(embed, memberId, null);
+}
+
+async function sendReminderLogUnlocked(embed, memberId = null, incidentKey = null) {
   if (!REMINDER_LOG_CHANNEL_ID) {
-    console.warn("⚠️ REMINDER_LOG_CHANNEL_ID is not configured; member-facing reminder log was not sent.");
-    return;
+    console.warn("⚠️ REMINDER_LOG_CHANNEL_ID is not configured; reminder log was not sent.");
+    return null;
   }
   if (REMINDER_LOG_CHANNEL_ID === MOD_LOG_CHANNEL_ID) {
     console.error("❌ REMINDER_LOG_CHANNEL_ID must be different from MOD_LOG_CHANNEL_ID.");
-    return;
+    return null;
   }
   try {
     const channel = await client.channels.fetch(REMINDER_LOG_CHANNEL_ID);
-    if (channel?.isTextBased()) {
-      const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: memberId ? [memberId] : [] } };
-      if (memberId) payload.content = `<@${memberId}>`;
-      await channel.send(payload);
-    } else {
+    if (!channel?.isTextBased()) {
       console.error("❌ REMINDER LOG channel is missing or is not text-based.");
+      return null;
     }
-  } catch (e) { console.error("❌ REMINDER LOG send failed:", e.message); }
+    const payload = { embeds: [applyLampoonFooter(embed)], allowedMentions: { parse: [], users: memberId ? [memberId] : [] } };
+    if (memberId) payload.content = `<@${memberId}>`;
+    if (incidentKey) {
+      const incident = spamIncidents.get(incidentKey);
+      if (incident?.reminderMessageId) {
+        const existing = await channel.messages.fetch(incident.reminderMessageId).catch(() => null);
+        if (existing) {
+          await existing.edit({ embeds: payload.embeds, allowedMentions: payload.allowedMentions });
+          return existing;
+        }
+      }
+      const sent = await channel.send(payload);
+      const currentIncident = spamIncidents.get(incidentKey);
+      if (currentIncident) currentIncident.reminderMessageId = sent.id;
+      return sent;
+    }
+    return await channel.send(payload);
+  } catch (e) {
+    console.error("❌ REMINDER LOG send/update failed:", e.message);
+    return null;
+  }
 }
 
 async function timeoutMember(member, minutes, reason) {
@@ -1247,30 +1457,76 @@ function getRemovalLogDetails(message, reason, serious, actionTaken) {
 
 async function logRemovedMessage(message, reason, serious = false, actionTaken = "Message deleted.") {
   if (!message?.guild) return;
+  const messageKey = `${message.guild.id}:${message.id}`;
   const content = String(message.content || "[No text content — message may contain attachments or embeds]").slice(0, 1000);
   const details = getRemovalLogDetails(message, reason, serious, actionTaken);
   const commonDescription = `**Member:** <@${message.author?.id}>\n**Channel:** <#${message.channel?.id}>`;
+  // Private audit log: exactly one record per message ID, even if handlers retry.
+  if (!auditLoggedMessageIds.has(messageKey)) {
+    auditLoggedMessageIds.add(messageKey);
+    const modEmbed = new EmbedBuilder()
+      .setColor(details.color).setTitle(details.title)
+      .setDescription("A message was removed by the Lampoon moderation system.")
+      .addFields(
+        { name: "👤 User", value: `${message.author?.tag || message.author?.username || "Unknown user"}\n\`${message.author?.id || "Unknown ID"}\``, inline: false },
+        { name: "📍 Channel", value: `${message.channel?.name ? `#${message.channel.name}` : "Unknown channel"}\n\`${message.channel?.id || "Unknown ID"}\``, inline: false },
+        { name: "📋 Reason", value: details.reasonText.slice(0, 1024), inline: false },
+        { name: "💬 Removed content", value: content || "[Empty message]", inline: false },
+        { name: "📎 Media", value: message.attachments?.size ? [...message.attachments.values()].map(a => `${a.name || "attachment"} (${a.contentType || "unknown type"})`).join("\n").slice(0, 1024) : "None", inline: false },
+        { name: "🔗 Message ID", value: `\`${message.id || "Unknown ID"}\``, inline: false },
+        { name: "🕒 Message sent", value: message.createdTimestamp ? `<t:${Math.floor(message.createdTimestamp / 1000)}:F>` : "Unknown", inline: false },
+        { name: "🗑️ Removed / logged", value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false },
+        { name: "🚨 Serious", value: serious ? "Yes" : "No", inline: false }
+      ).setTimestamp();
+    await sendModerationLog(modEmbed, message.author?.id);
+  }
 
-  // PRIVATE MOD LOG: use the same severity color as the member-facing reminder.
-  // Yellow = ordinary text/format removal; orange = rejected media; red = serious violation.
-  const modEmbed = new EmbedBuilder()
-    .setColor(details.color)
-    .setTitle(details.title)
-    .setDescription("A message was removed by the Lampoon moderation system.")
-    .addFields(
-      { name: "👤 User", value: `${message.author?.tag || message.author?.username || "Unknown user"}\n\`${message.author?.id || "Unknown ID"}\``, inline: false },
-      { name: "📍 Channel", value: `${message.channel?.name ? `#${message.channel.name}` : "Unknown channel"}\n\`${message.channel?.id || "Unknown ID"}\``, inline: false },
-      { name: "📋 Reason", value: details.reasonText.slice(0, 1024), inline: false },
-      { name: "💬 Message", value: content || "[Empty message]", inline: false },
-      { name: "🔗 Message ID", value: "`" + (message.id || "Unknown ID") + "`", inline: false },
-      { name: "🕒 Message sent", value: message.createdAt ? `<t:${Math.floor(message.createdTimestamp / 1000)}:F>` : "Unknown", inline: false },
-      { name: "🗑️ Removed / logged", value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false },
-      { name: "⏱️ Processing delay", value: message.createdTimestamp ? `${Math.max(0, Date.now() - message.createdTimestamp)} ms` : "Unknown", inline: false },
-      { name: "🚨 Serious", value: serious ? "Yes" : "No", inline: false }
-    )
-    .setTimestamp();
+  // Keep the existing member-facing Reminder Log format and behavior unchanged.
+  // Spam counts and timeout escalation are handled separately; they must not
+  // replace the normal MESSAGE REMOVE / MEDIA CORRECTION / ACTION VIOLATION embed.
+  const incidentKey = `${message.guild.id}:${message.author?.id}`;
+  let incident = spamIncidents.get(incidentKey);
+  if (!incident) {
+    incident = {
+      count: 0,
+      firstChannelId: message.channel?.id,
+      firstChannelName: message.channel?.name,
+      firstMessage: content,
+      firstMessageId: message.id,
+      firstHasMedia: Boolean(message.attachments?.size),
+      firstReason: details.reasonText,
+      color: details.color,
+      title: details.title,
+      reminderMessageId: null,
+      auditSummaryMessageId: null,
+      removals: [],
+      seriousLogged: false,
+      lastSeenAt: Date.now()
+    };
+    spamIncidents.set(incidentKey, incident);
+  }
+  incident.lastSeenAt = Date.now();
+  incident.latestChannelId = message.channel?.id;
+  incident.latestContent = content;
+  incident.latestReason = details.reasonText;
+  incident.latestMessageId = message.id;
+  if (!Array.isArray(incident.removals)) incident.removals = [];
+  if (!incident.removals.some(item => item.messageId === message.id)) {
+    const attachments = [...(message.attachments?.values?.() || [])];
+    const contentType = attachments.length
+      ? attachments.map(a => /image\/gif|\.gif$/i.test(`${a.contentType || ""} ${a.name || ""}`) ? "GIF" : (a.contentType || "Media").startsWith("image/") ? "Image" : (a.contentType || "").startsWith("video/") ? "Video" : "Media").join(", ")
+      : (/^(?:<a?:[^:]+:\d+>|[\p{Extended_Pictographic}\s\uFE0F\u200D])+$/u.test(content) ? "Emoji" : "Text");
+    incident.removals.push({
+      channelId: message.channel?.id || "unknown",
+      channelName: message.channel?.name || "unknown",
+      messageId: message.id || "unknown",
+      content,
+      type: contentType,
+      reason: details.reasonText,
+      timestamp: message.createdTimestamp || Date.now()
+    });
+  }
 
-  // One concise, channel-specific correction. Never copy the reason into this field.
   const reasonLower = details.reasonText.toLowerCase();
   const channelRule = CHANNEL_RULES[message.channel?.id] || CHANNEL_RULES[message.channel?.parentId];
   let publicCorrection = "Review the channel topic and submit content in the required format.";
@@ -1280,6 +1536,8 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
     else publicCorrection = "Stop the prohibited behavior and follow the server rules.";
   } else if (channelRule?.type === "code") {
     publicCorrection = "Post a screenshot/image as a new message. Replies may only contain one approved status or exact appreciation phrase.";
+  } else if (channelRule?.type === "event-code") {
+    publicCorrection = "Use the Event Code Share format (for example, Code: XSVAB7C3 - 986). Text-only and code-only submissions are allowed; no screenshot or Code Share verification is required.";
   } else if (channelRule?.type === "profile") {
     publicCorrection = "Post your own Honor of Kings profile/account image or video as a new message.";
   } else if (channelRule?.type === "skin") {
@@ -1294,13 +1552,13 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
     publicCorrection = "Post a meme as an image, video, or GIF in a new message. Sexualized content is a serious violation.";
   } else if (channelRule?.type === "build") {
     publicCorrection = "Keep the discussion relevant to Honor of Kings strategies, builds, heroes, gameplay, or tips.";
-  } else if (/gif/.test(reasonLower)) {
-    publicCorrection = "Upload the required image or video in a format supported by this channel.";
   } else if (/emoji|sticker|casual chat|small talk|text-only|wrong submission format|unrelated conversation/.test(reasonLower)) {
     publicCorrection = "Submit the content and media format required by this channel as a new message.";
   } else if (/not.*match|does not match|rejected|not a .*meme|not .*fan.?art/.test(reasonLower)) {
     publicCorrection = "Replace the rejected media with content that clearly matches this channel's topic.";
   }
+
+  // Preserve the original Reminder Log structure and per-message behavior.
   const reminderDescription = `${commonDescription}\n\n**Specific reason:** ${details.reasonText.slice(0, 650)}\n\n**Correction to pass:** ${publicCorrection.slice(0, 400)}`;
   const reminderEmbed = new EmbedBuilder()
     .setColor(details.color)
@@ -1308,17 +1566,52 @@ async function logRemovedMessage(message, reason, serious = false, actionTaken =
     .setDescription(reminderDescription)
     .setTimestamp();
 
-  await Promise.all([
-    sendModerationLog(modEmbed, message.author?.id),
-    sendReminderLog(reminderEmbed, message.author?.id)
-  ]);
+  await sendReminderLog(reminderEmbed, message.author?.id);
+}
+
+
+async function countRemovedViolation(message, reason) {
+  if (!message?.guild || !message.author || message.author.bot) return null;
+  const msgKey = `${message.guild.id}:${message.id}`;
+  if (spamCountedMessageIds.has(msgKey)) return spamIncidents.get(`${message.guild.id}:${message.author.id}`)?.count || 0;
+  spamCountedMessageIds.add(msgKey);
+  const incidentKey = `${message.guild.id}:${message.author.id}`;
+  const incident = spamIncidents.get(incidentKey) || null;
+  if (incident?.seriousLogged || (incident?.count || 0) >= SPAM_COUNTER_CAP) return SPAM_COUNTER_CAP;
+  const nextCount = Math.min(SPAM_COUNTER_CAP, (incident?.count || 0) + 1);
+  if (incident) { incident.count = nextCount; incident.firstReason ||= String(reason || "Message removed for a channel-rule violation."); }
+  // logRemovedMessage initializes the incident with the first removed message; update the count there.
+  const activeIncident = spamIncidents.get(incidentKey);
+  if (activeIncident) activeIncident.count = nextCount;
+  if ([10, 15, 20].includes(nextCount)) {
+    const level = SPAM_TIMEOUT_LEVELS.find(x => x.at === nextCount);
+    if (level) {
+      const lock = spamActionLocks.get(incidentKey) || Promise.resolve();
+      const action = lock.then(async () => {
+        const current = spamIncidents.get(incidentKey);
+        if (!current || current.lastTimeoutThreshold === nextCount) return;
+        current.lastTimeoutThreshold = nextCount;
+        const member = await message.guild.members.fetch(message.author.id).catch(() => null);
+        const result = await timeoutMember(member, level.minutes, `Spam protection: ${nextCount} removed violations across server channels.`);
+        current.timeoutMinutes = level.minutes;
+        current.timeoutApplied = result.ok;
+        if (nextCount === 20) current.seriousLogged = true;
+        console.log(`🚨 Spam threshold reached | user=${message.author.id} | count=${nextCount} | timeout=${level.minutes}m | applied=${result.ok}`);
+      });
+      spamActionLocks.set(incidentKey, action.catch(err => console.error("Spam threshold action failed:", err)));
+      await action;
+    }
+  }
+  await updateSpamAuditSummary(incidentKey, message);
+  return nextCount;
 }
 
 async function deleteOnly(message, reason) {
   await message.delete().catch(error =>
     console.error("❌ Delete failed:", error.message)
   );
-  await logRemovedMessage(message, reason, false, "Message deleted. No timeout applied.");
+  await logRemovedMessage(message, reason, false, "Message deleted.");
+  await countRemovedViolation(message, reason);
   console.log(`🗑️ Deleted in #${message.channel.name}: ${reason}`);
 }
 
@@ -1327,19 +1620,13 @@ async function deleteOnly(message, reason) {
 // ============================================================
 function detectSpam(message) {
   const now = Date.now();
-  const key = `${message.guild.id}:${message.channel.id}:${message.author.id}`;
-  const penaltyUntil = activeSpamPenaltyUntil.get(key) || 0;
-  if (now < penaltyUntil) {
-    return { spam: true, alreadyReported: true, reason: "Repeated message spam after a serious-violation warning." };
-  }
-
+  const key = `${message.guild.id}:${message.author.id}`; // server-wide, not per-channel
   const recent = (recentUserMessages.get(key) || []).filter(timestamp => now - timestamp <= SPAM_WINDOW_MS);
   recent.push(now);
   recentUserMessages.set(key, recent);
   if (recent.length >= SPAM_MESSAGE_THRESHOLD) {
-    activeSpamPenaltyUntil.set(key, now + SPAM_PENALTY_COOLDOWN_MS);
     recentUserMessages.set(key, []);
-    return { spam: true, alreadyReported: false, reason: `Message spam: ${SPAM_MESSAGE_THRESHOLD} messages within ${SPAM_WINDOW_MS / 1000} seconds.` };
+    return { spam: true, alreadyReported: false, reason: `Message spam: ${SPAM_MESSAGE_THRESHOLD} messages within ${SPAM_WINDOW_MS / 1000} seconds across server channels.` };
   }
   return { spam: false };
 }
@@ -1352,6 +1639,8 @@ async function deleteAndModerate(message, reason, serious) {
     ? `${violation.action} Violation count: ${violation.count}.`
     : (violation?.action || "Message deleted.");
   await logRemovedMessage(message, reason, Boolean(serious), action);
+  if (!serious) await countRemovedViolation(message, reason);
+  else await updateSpamAuditSummary(`${message.guild.id}:${message.author.id}`, message);
 }
 
 const pendingImageScans = new Map();
@@ -1436,15 +1725,10 @@ client.on("messageCreate", async (message) => {
     const directRule = CHANNEL_RULES[channel.id];
     const parentRule = channel.isThread?.() ? CHANNEL_RULES[channel.parentId] : null;
     const rule = directRule || parentRule;
-    if (!rule) return;
 
-    // Move/replace the sticky BEFORE spam checks, AI scanning, and moderation.
-    // This keeps it at the bottom while a post is being scanned, even if the
-    // post is later removed. ensureSticky serializes work per channel.
-    if (!(channel.isThread?.() && parentRule?.type === "build")) {
-      // Sticky refresh is best-effort and must never prevent moderation.
-      // If Discord denies history access or sticky maintenance throws, continue
-      // into deterministic format validation and message deletion.
+    // Refresh stickies only in channels with configured channel rules. Spam detection
+    // itself runs server-wide, including channels without a submission validator.
+    if (rule && !(channel.isThread?.() && parentRule?.type === "build")) {
       try {
         await refreshStickyAfterMessage(channel, rule);
       } catch (stickyError) {
@@ -1455,18 +1739,13 @@ client.on("messageCreate", async (message) => {
     const spam = detectSpam(message);
     if (spam.spam) {
       await message.delete().catch(e => console.error("❌ Spam message delete failed:", e.message));
-      if (!spam.alreadyReported) {
-        const violation = await registerViolation(message, spam.reason, true, true);
-        const action = violation?.count
-          ? `${violation.action} Violation count: ${violation.count}.`
-          : (violation?.action || "Message deleted.");
-        await logRemovedMessage(message, spam.reason, true, action);
-      } else {
-        console.log(`🧹 Removed follow-up spam from ${message.author.tag} in #${channel.name} (already reported this burst).`);
-      }
+      await logRemovedMessage(message, spam.reason, false, "Spam message deleted.");
+      await countRemovedViolation(message, spam.reason);
       return;
     }
 
+    // Channels without dedicated content rules still receive cross-server spam protection.
+    if (!rule) return;
     const processed = await processMessage(message, rule);
     console.log(`📨 Moderation result | channel=#${channel.name} (${channel.id}) | user=${message.author.tag} | action=${processed.action} | reason=${processed.result?.reason || "none"}`);
 
@@ -1687,7 +1966,7 @@ client.on("interactionCreate", async (interaction) => {
 
 let readyWarning = null;
 
-client.once("clientReady", async () => {
+client.once("ready", async () => {
   if (readyWarning) clearTimeout(readyWarning);
   console.log("✅ Discord Gateway READY event received.");
   console.log("🔐 Discord Gateway READY event received.");
@@ -1695,7 +1974,7 @@ client.once("clientReady", async () => {
   console.log(`🤖 Logged in as ${client.user.tag}`);
   console.log(`🏠 Connected to ${client.guilds.cache.size} guild(s)`);
   console.log(
-    `⏱️ Thresholds: Spam=${SPAM_TIMEOUT_MINUTES}m (Code Share/Forum exempt) | ` +
+    `⏱️ Spam tiers: 10 violations=10m, 15=30m, 20+=60m; counter is server-wide and capped at 20 | ` +
     `Moderate=${MODERATION_TIMEOUT_MINUTES}m | ` +
     `Repeated=${REPEATED_VIOLATION_TIMEOUT_MINUTES}m | ` +
     `Serious=${SERIOUS_VIOLATION_TIMEOUT_MINUTES}m`

@@ -60,5 +60,13 @@ Grant only the permissions the bot needs:
 ## Embed icon settings
 
 - `LAMPOON_ICON_URL` controls the embed thumbnail only.
+- On sticky refresh/deployment, the bot carries forward a thumbnail from the newest recognized old sticky when `LAMPOON_ICON_URL` is unset, then consolidates recognized old reminders to one current sticky per configured channel. For a guaranteed thumbnail on a brand-new channel with no previous sticky, set `LAMPOON_ICON_URL` to the desired HTTPS image URL.
 - `LAMPOON_FOOTER_ICON_URL` controls the footer icon only.
 - The thumbnail and footer icon settings are independent.
+
+## Server-wide spam protection updates
+
+- Removed violations are counted by guild ID + Discord user ID across configured moderation channels; rapid spam detection also uses a server-wide user key rather than a per-channel key.
+- Timeout tiers trigger at 10 violations (10 minutes), 15 violations (30 minutes), and 20 violations (60 minutes). The in-memory counter caps at 20 for the current bot process.
+- The Reminder Log keeps one editable summary per member, preserving the first removed message/media type and first violating channel. The private MOD/Audit log records each distinct removed message once, including its channel and content/media details.
+- Duplicate message processing is guarded by message-ID deduplication. These runtime counters/log-message references are in memory and reset when the bot restarts.
